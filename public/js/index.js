@@ -21,11 +21,10 @@
  *    distribution.
  */
 
-require.ready(function() { // Waits for page load
-require([
+require(["util/domReady!", // Waits for page load
     "game-renderer",
-    "util/gl-util"
-], function(gameRenderer, glUtil) { 
+    "util/gl-util",
+], function(doc, gameRenderer, glUtil) { 
 
     "use strict";
     
@@ -76,5 +75,4 @@ require([
         }
         renderer.resize(gl, canvas);
     }, false);
-});
 });
