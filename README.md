@@ -8,6 +8,6 @@ so that you can easily access the code at an time.
 Entries
 -------------------------
 
- * **[Part 0 - The Foreword](http://blog.tojicode.com/2011/10/building-game-part-0-foreword.html)** - _No Branch_
- * **[Part 1 - The Setup](http://blog.tojicode.com/)** - _[Source Branch](https://github.com/toji/building-the-game/tree/part-1)_
+ * **[Part 0 - The Foreword](http://blog.tojicode.com/2011/10/building-game-part-0-foreword.html)**
+ * **[Part 1 - The Setup](http://blog.tojicode.com/)** - _[Source Branch](https://github.com/toji/building-the-game/tree/part-1)_ - [Live Demo](http://media.tojicode.com/btg/part1/)
  
