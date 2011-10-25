@@ -1,0 +1,16 @@
+{
+    "modelVersion": 1,
+    "name": "polySurface5675",
+    "meshes": [ 
+        {
+            "material": "",
+            "defaultTexture": "root/texture/RobotArm.png",
+            "submeshes": [
+                { 
+                    "indexOffset": 0,
+                    "indexCount": 2148
+                }
+            ]
+        }
+     ]
+}

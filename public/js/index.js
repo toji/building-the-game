@@ -41,11 +41,11 @@ require(["util/domReady!", // Waits for page load
         glUtil.showGLFailed(frame); 
         return;
     }
-    
+
     // If we don't set this here, the rendering will be skewed
     canvas.width = canvas.offsetWidth;
     canvas.height = canvas.offsetHeight;
-    
+
     var renderer = new gameRenderer.GameRenderer(gl, canvas);
     renderer.resize(gl, canvas);
     
