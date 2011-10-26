@@ -23,10 +23,11 @@
 
 define([
     "camera",
-    "model",
+    "skinned-model",
+    "animation",
     "util/gl-util",
     "js/util/gl-matrix.js",
-], function(camera, model, glUtil) {
+], function(camera, model, animation, glUtil) {
 
     "use strict";
 
@@ -34,7 +35,8 @@ define([
         // To get a camera that gives you a flying first-person perspective, use camera.FlyingCamera
         // To get a camera that rotates around a fixed point, use camera.ModelCamera
         this.camera = new camera.ModelCamera(canvas);
-        this.camera.distance = 16;
+        this.camera.distance = 4;
+        this.camera.setCenter([0, 0, 1]);
 
         this.fov = 45;
         this.projectionMat = mat4.create();
@@ -45,8 +47,22 @@ define([
         gl.enable(gl.DEPTH_TEST);
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
-        this.model = new model.Model();
-        this.model.load(gl, "/root/model/vat");
+        this.model = new model.SkinnedModel();
+        this.model.load(gl, "/root/model/main_player_lorez");
+
+        var self = this;
+        this.anim = new animation.Animation();
+        this.anim.load("/root/model/run_forward", function(anim) {
+            // Simple hack to get the animation to play
+            var frameId = 0;
+            var frameTime = 1000 / anim.frameRate;
+            setInterval(function() {
+                if(self.model.complete) {
+                    anim.evaluate(frameId % anim.frameCount, self.model);
+                    frameId++;
+                }
+            }, frameTime);
+        });
     };
 
     GameRenderer.prototype.resize = function (gl, canvas) {

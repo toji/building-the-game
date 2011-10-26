@@ -48,17 +48,17 @@ require(["util/domReady!", // Waits for page load
 
     var renderer = new gameRenderer.GameRenderer(gl, canvas);
     renderer.resize(gl, canvas);
-    
+
     glUtil.startRenderLoop(gl, canvas, function(gl, timing) {
         fpsCounter.innerHTML = timing.framesPerSecond;
         renderer.drawFrame(gl, timing);
     });
-    
+
     //
     // Wire up the Fullscreen button
     //
     var fullscreenBtn = document.getElementById("fullscreen");
-    
+
     var canvasOriginalWidth = canvas.width;
     var canvasOriginalHeight = canvas.height;
     fullscreenBtn.addEventListener("click", function() {

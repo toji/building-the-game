@@ -28,8 +28,6 @@ define([
 
     "use strict";
 
-    var MAX_BONES_PER_MESH = 50;
-
     // Model Shader
     var modelVS = [ 
         "attribute vec3 position;",
@@ -213,10 +211,6 @@ define([
         this.vertexFormat = vertHeader[0];
         this.vertexStride = vertHeader[1];
 
-        if(this.vertexFormat & ModelVertexFormat.BoneWeights) {
-            this.boneMatrices = new Float32Array(16 * MAX_BONES_PER_MESH);
-        }
-
         return new Uint8Array(buffer, offset + 8, length - 8);
     };
 
@@ -234,8 +228,8 @@ define([
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, arrays.indexArray, gl.STATIC_DRAW);
     };
 
-    Model.prototype._parseModel = function (model) {
-        this.meshes = model.meshes;
+    Model.prototype._parseModel = function (doc) {
+        this.meshes = doc.meshes;
     };
 
     Model.prototype._compileMaterials = function (gl, meshes) {
@@ -249,11 +243,10 @@ define([
     Model.prototype.draw = function (gl, viewMat, projectionMat) {
         if (!this.complete) { return; }
 
-        var i, j, k,
+        var shader = modelShader,
+            i, j,
             mesh, submesh,
             indexOffset, indexCount;
-
-        var shader = modelShader;
 
         // Bind the appropriate buffers
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
@@ -275,17 +268,16 @@ define([
         // Setup the vertex layout
         gl.vertexAttribPointer(shader.attribute.position, 3, gl.FLOAT, false, this.vertexStride, 0);
         gl.vertexAttribPointer(shader.attribute.texture, 2, gl.FLOAT, false, this.vertexStride, 12);
-        gl.vertexAttribPointer(shader.attribute.normal, 3, gl.FLOAT, true, this.vertexStride, 20);
+        gl.vertexAttribPointer(shader.attribute.normal, 3, gl.FLOAT, false, this.vertexStride, 20);
         //gl.vertexAttribPointer(shader.attribute.tangent, 4, gl.FLOAT, false, this.vertexStride, 32);
 
-        var boneSet;
         for (i in this.meshes) {
             mesh = this.meshes[i];
-            
+
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, mesh.diffuse);
             gl.uniform1i(shader.uniform.diffuse, 0);
-            
+
             for (j in mesh.submeshes) {
                 submesh = mesh.submeshes[j];
                 gl.drawElements(gl.TRIANGLES, submesh.indexCount, gl.UNSIGNED_SHORT, submesh.indexOffset*2);
@@ -294,6 +286,7 @@ define([
     };
 
     return {
-        Model: Model
+        Model: Model,
+        ModelVertexFormat: ModelVertexFormat
     };
 });

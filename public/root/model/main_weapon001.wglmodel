@@ -1,0 +1,20 @@
+{
+    "modelVersion": 1,
+    "name": "main_weapon001",
+    "models": [ 
+        {
+            "material": "",
+            "defaultTexture": "root/texture/Weapon.png",
+            "meshes": [
+                { 
+                    "indexOffset": 0,
+                    "indexCount": 2859,
+                    "boneOffset": 0,
+                    "boneCount": 0
+                }
+            ]
+        }
+     ],
+     
+     "bones": []
+}

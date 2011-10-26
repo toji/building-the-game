@@ -18,6 +18,8 @@ struct WebGLMesh
 {
     public UInt16 indexOffset;
     public UInt16 indexCount;
+    public int boneOffset;
+    public int boneCount;
 }
 
 struct WebGLModel
@@ -28,6 +30,59 @@ struct WebGLModel
     public List<WebGLMesh> meshes;
 }
 
+struct WebGLBone
+{
+    public Transform originalBone;
+    public int originalId;
+    public int id;
+    public int parent;
+    public string name;
+    public Vector3 pos;
+    public Quaternion rot;
+    public float[] bindPoseMat;
+    public string skinned;
+}
+
+struct WebGLBoneKeyframe
+{
+    public Vector3 pos;
+    public Quaternion rot;
+}
+
+struct WebGLAnimatedBone
+{
+    public string bone;
+    public WebGLBoneKeyframe[] keyframes;
+}
+
+struct WebGLKeyframe
+{
+    public int id;
+    public List<WebGLBoneKeyframe> bones;
+}
+
+class BoneComparer : IComparer<WebGLBone> {
+    public int Compare (WebGLBone x, WebGLBone y)
+    {
+        int xParentCount = 0;
+        int yParentCount = 0;
+        
+        Transform parent = x.originalBone;
+        while(parent != null) {
+            xParentCount++;
+            parent = parent.parent;
+        }
+        
+        parent = y.originalBone;
+        while(parent != null) {
+            yParentCount++;
+            parent = parent.parent;
+        }
+
+        return xParentCount - yParentCount;
+    }
+}
+
 [Flags]
 enum VertexFormat {
     Position = 0x0001,
@@ -36,6 +91,7 @@ enum VertexFormat {
     Normal = 0x0008,
     Tangent = 0x0010,
     Color = 0x0020,
+    BoneWeights = 0x0040,
 }
 
 public class WebGLExporter : ScriptableObject
@@ -46,8 +102,8 @@ public class WebGLExporter : ScriptableObject
     private static string textureFolder = "WebGLExport/texture";
     public static string templatePath = Application.dataPath + "/Editor/WebGL/WebGLExportTemplates/";
     private static UInt32 vertBinaryVersion = 1;
-        
-    private static void WriteMeshBinary(Mesh mesh, VertexFormat vertexFormat, Material[] materials, Stream outStream, out Dictionary<Material, WebGLModel> models) 
+
+    private static void WriteMeshBinary(Mesh mesh, VertexFormat vertexFormat, Material[] materials, int[] boneIdLookup, Stream outStream, out Dictionary<Material, WebGLModel> models) 
     {
         int i, j;
         
@@ -59,6 +115,7 @@ public class WebGLExporter : ScriptableObject
         Vector3[] normals = mesh.normals;
         Vector4[] tangents = mesh.tangents;
         Color[] colors = mesh.colors;
+        BoneWeight[] boneWeights = mesh.boneWeights;
         
         // Build the vertex buffer
         UInt32 vertStride = 0;
@@ -69,6 +126,7 @@ public class WebGLExporter : ScriptableObject
         if((vertexFormat & VertexFormat.Normal) == VertexFormat.Normal) { vertStride += 12; }
         if((vertexFormat & VertexFormat.Tangent) == VertexFormat.Tangent) { vertStride += 16; }
         if((vertexFormat & VertexFormat.Color) == VertexFormat.Color) { vertStride += 4; }
+        if((vertexFormat & VertexFormat.BoneWeights) == VertexFormat.BoneWeights) { vertStride += 24; }
         
         //UInt32 vertCount = (UInt32)verts.Length;
         
@@ -113,6 +171,29 @@ public class WebGLExporter : ScriptableObject
                 vertBuf.Write((Byte)(colors[i].g * 255.0));
                 vertBuf.Write((Byte)(colors[i].b * 255.0));
                 vertBuf.Write((Byte)(colors[i].a * 255.0));
+            }
+            
+            if((vertexFormat & VertexFormat.BoneWeights) == VertexFormat.BoneWeights) {
+                // We're only going to be tracking 3 bones per vertex, so we need to find 
+                // the lowest weight and average the other weights out across it
+                int lowestWeightId = 0;
+                float lowestWeight = boneWeights[i].weight0;
+                
+                if(boneWeights[i].weight1 < lowestWeight) { lowestWeightId = 1; lowestWeight = boneWeights[i].weight1; }
+                if(boneWeights[i].weight2 < lowestWeight) { lowestWeightId = 2; lowestWeight = boneWeights[i].weight2; }
+                if(boneWeights[i].weight3 < lowestWeight) { lowestWeightId = 3; lowestWeight = boneWeights[i].weight3; }
+                
+                float weightAdjustment = 1.0f + lowestWeight;
+                
+                if(lowestWeightId != 0) { vertBuf.Write(boneWeights[i].weight0 * weightAdjustment); }
+                if(lowestWeightId != 1) { vertBuf.Write(boneWeights[i].weight1 * weightAdjustment); }
+                if(lowestWeightId != 2) { vertBuf.Write(boneWeights[i].weight2 * weightAdjustment); }
+                if(lowestWeightId != 3) { vertBuf.Write(boneWeights[i].weight3 * weightAdjustment); }
+                
+                if(lowestWeightId != 0) { vertBuf.Write((float)boneIdLookup[boneWeights[i].boneIndex0]); }
+                if(lowestWeightId != 1) { vertBuf.Write((float)boneIdLookup[boneWeights[i].boneIndex1]); }
+                if(lowestWeightId != 2) { vertBuf.Write((float)boneIdLookup[boneWeights[i].boneIndex2]); }
+                if(lowestWeightId != 3) { vertBuf.Write((float)boneIdLookup[boneWeights[i].boneIndex3]); }
             }
         }
         lumps.Add("vert", vertStream);
@@ -206,6 +287,111 @@ public class WebGLExporter : ScriptableObject
         outStream.Write(bytes, 0, bytes.Length);
     }
     
+    private static void WriteSkinnedMeshJson(SkinnedMeshRenderer skinnedRenderer, WebGLBone[] bones, Stream outStream, Dictionary<Material, WebGLModel> materialModels) 
+    {       
+        Mesh mesh = skinnedRenderer.sharedMesh;
+        int i;
+        
+        // Map the bones used by each sub-mesh
+        foreach(WebGLModel model in materialModels.Values) {
+            for(i = 0; i < model.meshes.Count; ++i) {
+                WebGLMesh subMesh = model.meshes[i];
+                
+                // Eventually this will have to change, but for now let's just keep things simple:
+                subMesh.boneOffset = 0;
+                subMesh.boneCount = bones.Length;
+                
+                model.meshes[i] = subMesh;
+            }
+        }
+        
+        StringTemplateGroup templateGroup = new StringTemplateGroup ("MG", templatePath, typeof(DefaultTemplateLexer));
+        StringTemplate modelTemplate = templateGroup.GetInstanceOf("WebGLModel");
+        
+        modelTemplate.SetAttribute("name", mesh.name);
+        modelTemplate.SetAttribute("models", materialModels.Values);
+        modelTemplate.SetAttribute("bones", bones);
+        
+        string content = modelTemplate.ToString();
+        Byte[] bytes = new UTF8Encoding(true).GetBytes(CleanJSON(content));
+        outStream.Write(bytes, 0, bytes.Length);
+    }
+    
+    private static WebGLBone[] ProcessBones(SkinnedMeshRenderer skinnedRenderer) 
+    {
+        Mesh mesh = skinnedRenderer.sharedMesh;
+        List<WebGLBone> bones = new List<WebGLBone>();
+        Dictionary<Transform, WebGLBone> boneTable = new Dictionary<Transform, WebGLBone>();
+        
+        WebGLBone webGLBone, parentGLBone;
+        Transform bone;
+        int i,j;
+        
+        // First pass to setup the bones
+        for (i = 0; i < skinnedRenderer.bones.Length; ++i) {
+            bone = skinnedRenderer.bones[i];
+            webGLBone = new WebGLBone();
+            
+            // Only the bones that are actually used for skinning need a bind-pose matrix
+            webGLBone.bindPoseMat = new float[16];
+            for(j = 0; j < 16; ++j) {
+                webGLBone.bindPoseMat[j] = mesh.bindposes[i][j];
+            }
+            webGLBone.originalBone = bone;
+            webGLBone.originalId = i;
+            webGLBone.skinned = "true";
+            webGLBone.name = bone.name;
+            webGLBone.pos = bone.localPosition;
+            webGLBone.rot = bone.localRotation;
+            
+            boneTable[bone] = webGLBone; // Ensure that previously existing bones get replaced
+            
+            while(bone.parent != bone.root && !boneTable.ContainsKey(bone.parent)) {
+                bone = bone.parent;
+                webGLBone = new WebGLBone();
+                webGLBone.skinned = "false";
+                webGLBone.originalBone = bone;
+                webGLBone.originalId = -1;
+                webGLBone.name = bone.name;
+                webGLBone.pos = bone.localPosition;
+                webGLBone.rot = bone.localRotation;
+                
+                boneTable.Add(bone, webGLBone);
+            }
+        }
+        
+        foreach(WebGLBone wglBone in boneTable.Values) {
+            bones.Add(wglBone);
+        }
+        
+        // Sort the bones by parent (children should always have higher id's than their parent bones)
+        bones.Sort(new BoneComparer());
+        
+        for (i = 0; i < bones.Count; ++i) {
+            webGLBone = bones[i];
+            webGLBone.id = i;
+            
+            bone = webGLBone.originalBone;
+            if(boneTable.TryGetValue(bone.parent, out parentGLBone)) {
+                webGLBone.parent = parentGLBone.id;
+            } else {
+                webGLBone.parent = -1;
+                
+                while(/*bone.parent &&*/bone.parent != bone.root) {
+                    bone = bone.parent;
+                    
+                    webGLBone.pos = bone.localRotation * webGLBone.pos;
+                    if(bone.parent) { webGLBone.pos += bone.localPosition; }
+                    webGLBone.rot = bone.localRotation * webGLBone.rot;
+                }
+            }
+            boneTable[webGLBone.originalBone] = webGLBone;
+            bones[i] = webGLBone;
+        }
+        
+        return bones.ToArray();
+    }
+    
     private static string CreateWebTexture(Texture2D texture) {
         if(texture == null) { return null; }
         
@@ -241,6 +427,80 @@ public class WebGLExporter : ScriptableObject
         
         return publicPath;
     }
+    
+    private static void WriteAnimationJson(AnimationClip clip, Stream outStream) 
+    {       
+        AnimationClipCurveData[] curves = AnimationUtility.GetAllCurves(clip);
+        
+        int frameCount = (int)(clip.frameRate * clip.length);
+        
+        Dictionary<string, WebGLAnimatedBone> boneTable = new Dictionary<string, WebGLAnimatedBone>();
+        
+        int i;
+        
+        // Gather the transform information for all
+        foreach(AnimationClipCurveData curveData in curves) {
+            AnimationCurve curve = curveData.curve;
+            string boneName = curveData.path;
+            
+            int pathSeparator = boneName.LastIndexOf('/');
+            if(pathSeparator != -1) {
+                boneName = boneName.Substring(pathSeparator+1); 
+            }
+            
+            WebGLAnimatedBone animatedBone;
+            
+            if(!boneTable.TryGetValue(boneName, out animatedBone)) {
+                animatedBone = new WebGLAnimatedBone();
+                animatedBone.bone = boneName;
+                animatedBone.keyframes = new WebGLBoneKeyframe[frameCount];
+                
+                boneTable.Add(boneName, animatedBone);
+            }
+            
+            for(i = 0; i < frameCount; ++i) {
+                float frameTime = (float)i * (1.0f / (float)clip.frameRate); 
+                float frameVal = curve.Evaluate(frameTime);
+                switch(curveData.propertyName) {
+                    case "m_LocalRotation.x": animatedBone.keyframes[i].rot.x = frameVal; break;
+                    case "m_LocalRotation.y": animatedBone.keyframes[i].rot.y = frameVal; break;
+                    case "m_LocalRotation.z": animatedBone.keyframes[i].rot.z = frameVal; break;
+                    case "m_LocalRotation.w": animatedBone.keyframes[i].rot.w = frameVal; break;
+                    
+                    case "m_LocalPosition.x": animatedBone.keyframes[i].pos.x = frameVal; break;
+                    case "m_LocalPosition.y": animatedBone.keyframes[i].pos.y = frameVal; break;
+                    case "m_LocalPosition.z": animatedBone.keyframes[i].pos.z = frameVal; break;
+                }
+            }
+        }
+        
+        List<WebGLKeyframe> keyframes = new List<WebGLKeyframe>();
+        for(i = 0; i < frameCount; ++i) {
+            WebGLKeyframe keyFrame = new WebGLKeyframe();
+            keyFrame.id = i;
+            keyFrame.bones = new List<WebGLBoneKeyframe>();
+            
+            foreach(WebGLAnimatedBone animatedBone in boneTable.Values) {
+                keyFrame.bones.Add(animatedBone.keyframes[i]);  
+            }
+            
+            keyframes.Add(keyFrame);
+        }
+        
+        StringTemplateGroup templateGroup = new StringTemplateGroup ("MG", templatePath, typeof(DefaultTemplateLexer));
+        StringTemplate animTemplate = templateGroup.GetInstanceOf("WebGLAnim");
+        
+        animTemplate.SetAttribute("clip", clip);
+        animTemplate.SetAttribute("clipLength", (int)(clip.length * 1000.0)); // Why does this die if I try to pull it from clip directly in the template?
+        animTemplate.SetAttribute("frameCount", frameCount);
+        animTemplate.SetAttribute("bones", boneTable.Values);
+        animTemplate.SetAttribute("keyframes", keyframes);
+        //animTemplate.SetAttribute("curves", curves);
+        
+        string content = animTemplate.ToString();
+        Byte[] bytes = new UTF8Encoding (true).GetBytes(CleanJSON(content));
+        outStream.Write(bytes, 0, bytes.Length);
+    }
 
     private static void MeshToFile(MeshFilter mf, string folder, string filename) 
     {    
@@ -252,11 +512,49 @@ public class WebGLExporter : ScriptableObject
                 VertexFormat.Normal |
                 VertexFormat.Tangent;
             
-            WriteMeshBinary(mf.sharedMesh, vertexFormat, mf.renderer.sharedMaterials, stream, out materialModels);
+            WriteMeshBinary(mf.sharedMesh, vertexFormat, mf.renderer.sharedMaterials, null, stream, out materialModels);
         }
         using (FileStream stream = new FileStream(folder +"/" + filename + ".wglmodel", FileMode.Create)) 
         {
             WriteMeshJson(mf, stream, materialModels);
+        }
+    }
+
+    private static void SkinnedMeshToFile(SkinnedMeshRenderer skinnedRenderer, string folder, string filename) 
+    {    
+        WebGLBone[] bones = ProcessBones(skinnedRenderer);
+        
+        // Create the bone lookup table
+        WebGLBone webGLBone;
+        int[] boneIdLookup = new int[skinnedRenderer.bones.Length];
+        for(int i = 0; i < bones.Length; ++i) {
+            webGLBone = bones[i];
+            if(webGLBone.originalId >= 0) {
+                boneIdLookup[webGLBone.originalId] = webGLBone.id;
+            }
+        }
+        
+        Dictionary<Material, WebGLModel> materialModels;
+        using (FileStream stream = new FileStream(folder +"/" + filename + ".wglvert", FileMode.Create)) 
+        {
+            VertexFormat vertexFormat = VertexFormat.Position | 
+                VertexFormat.UV | 
+                VertexFormat.Normal |
+                VertexFormat.Tangent |
+                VertexFormat.BoneWeights;
+            WriteMeshBinary(skinnedRenderer.sharedMesh, vertexFormat, skinnedRenderer.sharedMaterials, boneIdLookup, stream, out materialModels);
+        }
+        using (FileStream stream = new FileStream(folder +"/" + filename + ".wglmodel", FileMode.Create)) 
+        {
+            WriteSkinnedMeshJson(skinnedRenderer, bones, stream, materialModels);
+        }
+    }
+
+    private static void AnimationToFile(AnimationClip anim, string folder, string filename) 
+    {
+        using (FileStream stream = new FileStream(folder +"/" + filename + ".wglanim", FileMode.Create)) 
+        {
+            WriteAnimationJson(anim, stream);
         }
     }
 
@@ -286,21 +584,52 @@ public class WebGLExporter : ScriptableObject
     {
         if (!CreateTargetFolder())
             return;
-         
+        
         UnityEngine.Object[] selection;
         int exportedObjects = 0;
         
         selection = Selection.GetFiltered(typeof(MeshFilter), SelectionMode.Unfiltered);
+        
         for (int i = 0; i < selection.Length; i++)
         {
             exportedObjects++;
             MeshToFile((MeshFilter)selection[i], modelFolder, selection[i].name);
         }
         
+        selection = Selection.GetFiltered(typeof(SkinnedMeshRenderer), SelectionMode.Unfiltered);
+        for (int i = 0; i < selection.Length; i++)
+        {
+            exportedObjects++;
+            SkinnedMeshToFile((SkinnedMeshRenderer)selection[i], modelFolder, selection[i].name);
+        }
+        
         if (exportedObjects > 0) {
             Debug.Log("Exported " + exportedObjects + " meshes");
         } else {
             EditorUtility.DisplayDialog("Objects not exported", "Make sure at least some of your selected objects have mesh filters!", "");
+        }
+    }
+    
+    [MenuItem ("WebGL/Export Selected Animations")]
+    static void ExportSelecedAnimations()
+    {
+        if (!CreateTargetFolder())
+            return;
+         
+        int exportedObjects = 0;
+        
+        UnityEngine.Object[] selection = Selection.GetFiltered(typeof(AnimationClip), SelectionMode.Unfiltered);
+        
+        for (int i = 0; i < selection.Length; i++)
+        {
+            exportedObjects++;
+            AnimationToFile((AnimationClip)selection[i], modelFolder, selection[i].name);
+        }
+        
+        if (exportedObjects > 0) {
+            Debug.Log("Exported " + exportedObjects + " animations");
+        } else {
+            EditorUtility.DisplayDialog("Animations not exported", "Make sure at least some of your selected are animations!", "");
         }
     }
 }
