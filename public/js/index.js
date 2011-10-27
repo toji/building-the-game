@@ -27,7 +27,7 @@ require(["util/domReady!", // Waits for page load
 ], function(doc, gameRenderer, glUtil) { 
 
     "use strict";
-    
+
     //
     // Create gl context and start the render loop 
     //
@@ -58,15 +58,21 @@ require(["util/domReady!", // Waits for page load
     // Wire up the Fullscreen button
     //
     var fullscreenBtn = document.getElementById("fullscreen");
-    
+
+    document.cancelFullScreen = document.webkitCancelFullScreen || document.mozCancelFullScreen;
+
     var canvasOriginalWidth = canvas.width;
     var canvasOriginalHeight = canvas.height;
     fullscreenBtn.addEventListener("click", function() {
-        frame.webkitRequestFullScreen(Element.ALLOW_KEYBOARD_INPUT);
+        if(frame.webkitRequestFullScreen) {
+            frame.webkitRequestFullScreen(Element.ALLOW_KEYBOARD_INPUT);
+        } else if(frame.mozRequestFullScreen) {
+            frame.mozRequestFullScreen();
+        }
     }, false);
 
-    frame.addEventListener("webkitfullscreenchange", function() {
-        if(document.webkitIsFullScreen) {
+    function fullscreenchange() {
+        if(document.webkitIsFullScreen || document.mozFullScreen) {
             canvas.width = screen.width;
             canvas.height = screen.height;
         } else {
@@ -74,5 +80,8 @@ require(["util/domReady!", // Waits for page load
             canvas.height = canvasOriginalHeight;
         }
         renderer.resize(gl, canvas);
-    }, false);
+    }
+
+    frame.addEventListener("webkitfullscreenchange", fullscreenchange, false);
+    frame.addEventListener("mozfullscreenchange", fullscreenchange, false);
 });

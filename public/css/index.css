@@ -80,3 +80,20 @@ body {
 #game-frame:-webkit-full-screen #fullscreen {
     visible: false;
 }
+
+#game-frame:-moz-full-screen,
+#game-frame:-moz-full-screen #game-canvas {
+    margin: 0px;
+    padding: 0px;
+    width: 100%;
+    height: 100%;
+}
+
+#game-frame:-moz-full-screen #fps-counter {
+    position: absolute;
+    bottom: 5px;
+}
+
+#game-frame:-moz-full-screen #fullscreen {
+    visible: false;
+}
