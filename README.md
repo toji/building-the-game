@@ -11,5 +11,5 @@ Entries
  * **[Part 0 - The Foreword](http://blog.tojicode.com/2011/10/building-game-part-0-foreword.html)**
  * **[Part 1 - The Setup](http://blog.tojicode.com/2011/10/building-game-part-1-setup.html)** - _[Source Branch](https://github.com/toji/building-the-game/tree/part-1)_ - _[Live Demo](http://media.tojicode.com/btg/part1/)_
  * **[Part 2 - Model Format](http://blog.tojicode.com/2011/10/building-game-part-2-model-format.html)** - _[Source Branch](https://github.com/toji/building-the-game/tree/part-2)_ - _[Live Demo](http://media.tojicode.com/btg/part2/)_
- * **[Part 3 - Skinning & Animation](http://blog.tojicode.com/)** - _[Source Branch](https://github.com/toji/building-the-game/tree/part-3)_ - _[Live Demo](http://media.tojicode.com/btg/part3/)_
+ * **[Part 3 - Skinning & Animation](http://blog.tojicode.com/2011/10/building-game-part-3-skinning-animation.html)** - _[Source Branch](https://github.com/toji/building-the-game/tree/part-3)_ - _[Live Demo](http://media.tojicode.com/btg/part3/)_
 
