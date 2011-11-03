@@ -23,7 +23,7 @@
 
 define([
     "camera",
-    "skinned-model",
+    "model",
     "animation",
     "util/gl-util",
     "js/util/gl-matrix.js",
@@ -32,11 +32,13 @@ define([
     "use strict";
 
     var GameRenderer = function (gl, canvas) {
+        var i, instance;
+        
         // To get a camera that gives you a flying first-person perspective, use camera.FlyingCamera
         // To get a camera that rotates around a fixed point, use camera.ModelCamera
         this.camera = new camera.ModelCamera(canvas);
-        this.camera.distance = 4;
-        this.camera.setCenter([0, 0, 1]);
+        this.camera.distance = 75;
+        this.camera.setCenter([0, 0, 0]);
 
         this.fov = 45;
         this.projectionMat = mat4.create();
@@ -47,22 +49,40 @@ define([
         gl.enable(gl.DEPTH_TEST);
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
-        this.model = new model.SkinnedModel();
-        this.model.load(gl, "/root/model/main_player_lorez");
+        this.model1 = new model.Model();
+        this.model1.load(gl, "root/model/vat");
+        
+        this.model2 = new model.Model();
+        this.model2.load(gl, "root/model/crateSmall");
+        
+        this.model3 = new model.Model();
+        this.model3.load(gl, "root/model/crateMedium");
+        
+        this.model4 = new model.Model();
+        this.model4.load(gl, "root/model/barrelSmall");
+        
+        function createInstances(modelType, count) {
+            for(i = 0; i < count; ++i) {
+                instance = modelType.createInstance();
 
-        var self = this;
-        this.anim = new animation.Animation();
-        this.anim.load("/root/model/run_forward", function(anim) {
-            // Simple hack to get the animation to play
-            var frameId = 0;
-            var frameTime = 1000 / anim.frameRate;
-            setInterval(function() {
-                if(self.model.complete) {
-                    anim.evaluate(frameId % anim.frameCount, self.model);
-                    frameId++;
-                }
-            }, frameTime);
-        });
+                // Generate a random rotation and position for this instance
+                mat4.rotateX(instance.matrix, Math.random() * Math.PI);
+                mat4.rotateY(instance.matrix, Math.random() * Math.PI);
+                mat4.rotateZ(instance.matrix, Math.random() * Math.PI);
+
+                // Generate a random rotation and position for this instance
+                mat4.translate(instance.matrix, 
+                    [(Math.random()-0.5) * 100.0,
+                    (Math.random()-0.5) * 100.0,
+                    (Math.random()-0.5) * 100.0]
+                );
+            }
+        }
+        
+        createInstances(this.model1, 250);
+        createInstances(this.model2, 250);
+        createInstances(this.model3, 250);
+        createInstances(this.model4, 250);
     };
 
     GameRenderer.prototype.resize = function (gl, canvas) {
@@ -78,7 +98,10 @@ define([
 
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        this.model.draw(gl, viewMat, projectionMat);
+        this.model1.drawInstances(gl, viewMat, projectionMat);
+        this.model2.drawInstances(gl, viewMat, projectionMat);
+        this.model3.drawInstances(gl, viewMat, projectionMat);
+        this.model4.drawInstances(gl, viewMat, projectionMat);
     };
 
     return {

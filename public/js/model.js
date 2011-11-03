@@ -44,11 +44,15 @@ define([
         "varying vec3 vNormal;",
         "varying vec3 vLightDir;",
         "varying vec3 vEyeDir;",
+        
+        // A "manual" rotation matrix transpose to get the normal matrix
+        "mat3 getNormalMat(mat4 mat) {",
+        "   return mat3(mat[0][0], mat[1][0], mat[2][0], mat[0][1], mat[1][1], mat[2][1], mat[0][2], mat[1][2], mat[2][2]);",
+        "}",
 
         "void main(void) {",
         " mat4 modelViewMat = viewMat * modelMat;",
-        // A "manual" rotation matrix transpose to get the normal matrix
-        " mat3 normalMat = mat3(modelViewMat[0][0], modelViewMat[1][0], modelViewMat[2][0], modelViewMat[0][1], modelViewMat[1][1], modelViewMat[2][1], modelViewMat[0][2], modelViewMat[1][2], modelViewMat[2][2]);",
+        " mat3 normalMat = getNormalMat(modelViewMat);",
 
         " vec4 vPosition = modelViewMat * vec4(position, 1.0);",
         " gl_Position = projectionMat * vPosition;",
@@ -119,6 +123,8 @@ define([
         this.vertexBuffer = null;
         this.indexBuffer = null;
         this.meshes = null;
+        this._instances = [];
+        this._visibleFlag = -1;
         this.complete = false;
     };
 
@@ -239,8 +245,19 @@ define([
             mesh.diffuse = glUtil.loadTexture(gl, mesh.defaultTexture);
         }
     };
+    
+    Model.prototype.createInstance = function() {
+        var instance = new ModelInstance(this);
+        this._instances.push(instance);
+        return instance;
+    };
+    
+    Model.prototype.destroyInstance = function(instance) {
+        var index = this._instances.indexOf(instance);
+        if(index > -1) { this._instances.splice(index, 1); }
+    };
 
-    Model.prototype.draw = function (gl, viewMat, projectionMat) {
+    Model.prototype.draw = function (gl, viewMat, projectionMat, modelMat) {
         if (!this.complete) { return; }
 
         var shader = modelShader,
@@ -257,7 +274,7 @@ define([
         gl.uniform3f(shader.uniform.lightPos, 16, -32, 32);
 
         gl.uniformMatrix4fv(shader.uniform.viewMat, false, viewMat);
-        gl.uniformMatrix4fv(shader.uniform.modelMat, false, identityMat);
+        gl.uniformMatrix4fv(shader.uniform.modelMat, false, modelMat || identityMat);
         gl.uniformMatrix4fv(shader.uniform.projectionMat, false, projectionMat);
 
         gl.enableVertexAttribArray(shader.attribute.position);
@@ -283,6 +300,78 @@ define([
                 gl.drawElements(gl.TRIANGLES, submesh.indexCount, gl.UNSIGNED_SHORT, submesh.indexOffset*2);
             }
         }
+    };
+    
+    Model.prototype.drawInstances = function (gl, viewMat, projectionMat, visibileFlag) {
+        if (!this.complete) { return; }
+        if(this._visibleFlag > 0 && this._visibleFlag < visibilityFlag) { return; }
+
+        var shader = modelShader,
+            i, j, k,
+            mesh, submesh, instance,
+            indexOffset, indexCount;
+
+        // Bind the appropriate buffers
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+
+        gl.useProgram(shader);
+
+        gl.uniform3f(shader.uniform.lightPos, 16, -32, 32);
+
+        gl.uniformMatrix4fv(shader.uniform.viewMat, false, viewMat);
+        gl.uniformMatrix4fv(shader.uniform.projectionMat, false, projectionMat);
+
+        gl.enableVertexAttribArray(shader.attribute.position);
+        gl.enableVertexAttribArray(shader.attribute.texture);
+        gl.enableVertexAttribArray(shader.attribute.normal);
+        //gl.enableVertexAttribArray(shader.attribute.tangent);
+
+        // Setup the vertex layout
+        gl.vertexAttribPointer(shader.attribute.position, 3, gl.FLOAT, false, this.vertexStride, 0);
+        gl.vertexAttribPointer(shader.attribute.texture, 2, gl.FLOAT, false, this.vertexStride, 12);
+        gl.vertexAttribPointer(shader.attribute.normal, 3, gl.FLOAT, false, this.vertexStride, 20);
+        //gl.vertexAttribPointer(shader.attribute.tangent, 4, gl.FLOAT, false, this.vertexStride, 32);
+
+        for (i in this.meshes) {
+            mesh = this.meshes[i];
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, mesh.diffuse);
+            gl.uniform1i(shader.uniform.diffuse, 0);
+
+            for (j in mesh.submeshes) {
+                submesh = mesh.submeshes[j];
+                
+                for(k in this._instances) {
+                    instance = this._instances[k];
+                    
+                    if(instance._visibleFlag < 0 || instance._visibleFlag >= visibilityFlag) {
+                        gl.uniformMatrix4fv(shader.uniform.modelMat, false, instance.matrix);
+                        gl.drawElements(gl.TRIANGLES, submesh.indexCount, gl.UNSIGNED_SHORT, submesh.indexOffset*2);
+                    }
+                }
+            }
+        }
+    };
+    
+    var ModelInstance = function(model) {
+        this.model = model;
+        this.matrix = mat4.identity();
+        this._visibleFlag = -1;
+    };
+    
+    ModelInstance.prototype.destroy = function() {
+        this.model.destroyInstance(this);
+    };
+    
+    ModelInstance.prototype.draw = function(gl, viewMat, projectionMat) {
+        this.model.draw(this, viewMat, projectionMat, this.matrix);
+    };
+    
+    ModelInstance.prototype.updateVisibility = function(flag) {
+        this.model._visibleFlag = flag;
+        this._visibleFlag = flag;
     };
 
     return {

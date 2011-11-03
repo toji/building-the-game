@@ -1,0 +1,20 @@
+{
+    "modelVersion": 1,
+    "name": "polySurface3574",
+    "meshes": [ 
+        {
+            "material": "",
+            "defaultTexture": "root/texture/Props.png",
+            "submeshes": [
+                { 
+                    "indexOffset": 0,
+                    "indexCount": 498,
+                    "boneOffset": 0,
+                    "boneCount": 0
+                }
+            ]
+        }
+     ],
+     
+     "bones": []
+}
