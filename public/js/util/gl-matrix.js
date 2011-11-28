@@ -726,9 +726,13 @@ mat4.inverse = function (mat, dest) {
         b09 = a21 * a32 - a22 * a31,
         b10 = a21 * a33 - a23 * a31,
         b11 = a22 * a33 - a23 * a32,
+        
+        d = (b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06),
+        invDet;
 
-        // Calculate the determinant (inlined to avoid double-caching)
-        invDet = 1 / (b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06);
+        // Calculate the determinant
+        if (!d) { return null; }
+        invDet = 1 / d;
 
     dest[0] = (a11 * b11 - a12 * b10 + a13 * b09) * invDet;
     dest[1] = (-a01 * b11 + a02 * b10 - a03 * b09) * invDet;

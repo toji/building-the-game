@@ -1,1 +1,4 @@
 .DS_Store
+public/root/level/*
+public/root/texture/*
+public/root/model/*

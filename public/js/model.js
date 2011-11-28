@@ -22,9 +22,11 @@
  */
 
 define([
+    "texture",
     "util/gl-util",
+    "util/q",
     "js/util/gl-matrix.js",
-], function (glUtil) {
+], function (texture, glUtil, Q) {
 
     "use strict";
 
@@ -91,8 +93,51 @@ define([
         " gl_FragColor = vec4(color.rgb * lightValue, 1.0);",
         "}"
     ].join("\n");
+    
+    // Model Shader
+    var lightmapVS = [ 
+        "attribute vec3 position;",
+        "attribute vec2 texture;",
+        "attribute vec2 texture2;",
 
+        "uniform mat4 viewMat;",
+        "uniform mat4 modelMat;",
+        "uniform mat4 projectionMat;",
+        
+        "uniform vec2 lightmapScale;",
+        "uniform vec2 lightmapOffset;",
+
+        "varying vec2 vTexCoord;",
+        "varying vec2 vLightCoord;",
+
+        "void main(void) {",
+        " mat4 modelViewMat = viewMat * modelMat;",
+
+        " vec4 vPosition = modelViewMat * vec4(position, 1.0);",
+        " gl_Position = projectionMat * vPosition;",
+
+        " vTexCoord = texture;",
+        " vLightCoord = texture2 * lightmapScale + lightmapOffset;",
+        "}"
+    ].join("\n");
+
+    var lightmapFS = [
+        "uniform sampler2D diffuse;",
+        "uniform sampler2D lightmap;",
+
+        "varying vec2 vTexCoord;",
+        "varying vec2 vLightCoord;",
+
+        "void main(void) {",
+        " vec4 color = texture2D(diffuse, vTexCoord);",
+        " vec4 lightValue = texture2D(lightmap, vLightCoord);",
+        " float brightness = 9.0;",
+        " gl_FragColor = vec4(color.rgb * lightValue.rgb * (lightValue.a * brightness), 1.0);",
+        "}"
+    ].join("\n");
+    
     var modelShader = null;
+    var lightmapShader = null;
 
     var identityMat = mat4.create();
     mat4.identity(identityMat);
@@ -167,11 +212,11 @@ define([
         jsonXhr.send(null);
 
         if (!modelShader) {
-            modelShader = glUtil.createShaderProgram(gl, modelVS, modelFS, 
-                ["position", "texture", "normal"],
-                ["viewMat", "modelMat", "projectionMat", "diffuse",
-                 "lightPos", ]
-            );
+            modelShader = glUtil.createShaderProgram(gl, modelVS, modelFS);
+        }
+        
+        if (!lightmapShader) {
+            lightmapShader = glUtil.createShaderProgram(gl, lightmapVS, lightmapFS);
         }
     };
 
@@ -242,7 +287,9 @@ define([
         var i, mesh;
         for (i in meshes) {
             mesh = meshes[i];
-            mesh.diffuse = glUtil.loadTexture(gl, mesh.defaultTexture);
+            Q.when(texture.TextureManager.getInstance(gl, mesh.defaultTexture), function(tex) {
+                mesh.diffuse = tex;
+            });
         }
     };
     
@@ -257,6 +304,65 @@ define([
         if(index > -1) { this._instances.splice(index, 1); }
     };
 
+    Model.prototype.bindBuffer = function(gl, shader) {
+        var offset = 0,
+            format = this.vertexFormat,
+            stride = this.vertexStride;
+
+        // Bind the appropriate buffers
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+
+        // Position is always assumed to be present (otherwise what are you rendering?)
+        gl.enableVertexAttribArray(shader.attribute.position);
+        gl.vertexAttribPointer(shader.attribute.position, 3, gl.FLOAT, false, stride, 0);
+        offset = 12;
+
+        if(format & ModelVertexFormat.UV) {
+            if(shader.attribute.texture != undefined) {
+                gl.enableVertexAttribArray(shader.attribute.texture);
+                gl.vertexAttribPointer(shader.attribute.texture, 2, gl.FLOAT, false, stride, offset);
+            }
+            offset += 8;
+        }
+        if(format & ModelVertexFormat.UV2) {
+            if(shader.attribute.texture2 != undefined) {
+                gl.enableVertexAttribArray(shader.attribute.texture2);
+                gl.vertexAttribPointer(shader.attribute.texture2, 2, gl.FLOAT, false, stride, offset);
+            }
+            offset += 8;
+        }
+        if(format & ModelVertexFormat.Normal) {
+            if(shader.attribute.normal != undefined) {
+                gl.enableVertexAttribArray(shader.attribute.normal);
+                gl.vertexAttribPointer(shader.attribute.normal, 3, gl.FLOAT, false, stride, offset);
+            }
+            offset += 12;
+        }
+        if(format & ModelVertexFormat.Tangent) {
+            if(shader.attribute.tangent != undefined) {
+                gl.enableVertexAttribArray(shader.attribute.tangent);
+                gl.vertexAttribPointer(shader.attribute.tangent, 3, gl.FLOAT, false, stride, offset);
+            }
+            offset += 12;
+        }
+        if(format & ModelVertexFormat.Color) {
+            if(shader.attribute.color != undefined) {
+                gl.enableVertexAttribArray(shader.attribute.color);
+                gl.vertexAttribPointer(shader.attribute.color, 4, gl.UNSIGNED_BYTE, false, stride, offset);
+            }
+            offset += 4;
+        }
+        if(format & ModelVertexFormat.BoneWeights) {
+            if(shader.attribute.weights != undefined && shader.attribute.bones != undefined) {
+                gl.enableVertexAttribArray(shader.attribute.weights);
+                gl.enableVertexAttribArray(shader.attribute.bones);
+                gl.vertexAttribPointer(shader.attribute.weights, 3, gl.FLOAT, false, stride, offset);
+                gl.vertexAttribPointer(shader.attribute.bones, 3, gl.FLOAT, false, stride, offset+12);
+            }
+        }
+    };
+
     Model.prototype.draw = function (gl, viewMat, projectionMat, modelMat) {
         if (!this.complete) { return; }
 
@@ -265,28 +371,14 @@ define([
             mesh, submesh,
             indexOffset, indexCount;
 
-        // Bind the appropriate buffers
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
-
         gl.useProgram(shader);
+        this.bindBuffer(gl, shader);
 
         gl.uniform3f(shader.uniform.lightPos, 16, -32, 32);
 
         gl.uniformMatrix4fv(shader.uniform.viewMat, false, viewMat);
         gl.uniformMatrix4fv(shader.uniform.modelMat, false, modelMat || identityMat);
         gl.uniformMatrix4fv(shader.uniform.projectionMat, false, projectionMat);
-
-        gl.enableVertexAttribArray(shader.attribute.position);
-        gl.enableVertexAttribArray(shader.attribute.texture);
-        gl.enableVertexAttribArray(shader.attribute.normal);
-        //gl.enableVertexAttribArray(shader.attribute.tangent);
-
-        // Setup the vertex layout
-        gl.vertexAttribPointer(shader.attribute.position, 3, gl.FLOAT, false, this.vertexStride, 0);
-        gl.vertexAttribPointer(shader.attribute.texture, 2, gl.FLOAT, false, this.vertexStride, 12);
-        gl.vertexAttribPointer(shader.attribute.normal, 3, gl.FLOAT, false, this.vertexStride, 20);
-        //gl.vertexAttribPointer(shader.attribute.tangent, 4, gl.FLOAT, false, this.vertexStride, 32);
 
         for (i in this.meshes) {
             mesh = this.meshes[i];
@@ -311,34 +403,21 @@ define([
             mesh, submesh, instance,
             indexOffset, indexCount;
 
-        // Bind the appropriate buffers
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
-
         gl.useProgram(shader);
+        this.bindBuffer(gl, shader);
 
         gl.uniform3f(shader.uniform.lightPos, 16, -32, 32);
 
         gl.uniformMatrix4fv(shader.uniform.viewMat, false, viewMat);
         gl.uniformMatrix4fv(shader.uniform.projectionMat, false, projectionMat);
 
-        gl.enableVertexAttribArray(shader.attribute.position);
-        gl.enableVertexAttribArray(shader.attribute.texture);
-        gl.enableVertexAttribArray(shader.attribute.normal);
-        //gl.enableVertexAttribArray(shader.attribute.tangent);
-
-        // Setup the vertex layout
-        gl.vertexAttribPointer(shader.attribute.position, 3, gl.FLOAT, false, this.vertexStride, 0);
-        gl.vertexAttribPointer(shader.attribute.texture, 2, gl.FLOAT, false, this.vertexStride, 12);
-        gl.vertexAttribPointer(shader.attribute.normal, 3, gl.FLOAT, false, this.vertexStride, 20);
-        //gl.vertexAttribPointer(shader.attribute.tangent, 4, gl.FLOAT, false, this.vertexStride, 32);
+        gl.uniform1i(shader.uniform.diffuse, 0);
 
         for (i in this.meshes) {
             mesh = this.meshes[i];
 
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, mesh.diffuse);
-            gl.uniform1i(shader.uniform.diffuse, 0);
 
             for (j in mesh.submeshes) {
                 submesh = mesh.submeshes[j];
@@ -355,6 +434,50 @@ define([
         }
     };
     
+    Model.prototype.drawLightmappedInstances = function (gl, viewMat, projectionMat, lightmaps, visibileFlag) {
+        if (!this.complete) { return; }
+        if(this._visibleFlag > 0 && this._visibleFlag < visibilityFlag) { return; }
+
+        var shader = lightmapShader,
+            i, j, k,
+            mesh, submesh, instance,
+            indexOffset, indexCount;
+
+        gl.useProgram(shader);
+        this.bindBuffer(gl, shader);
+
+        gl.uniformMatrix4fv(shader.uniform.viewMat, false, viewMat);
+        gl.uniformMatrix4fv(shader.uniform.projectionMat, false, projectionMat);
+
+        gl.uniform1i(shader.uniform.diffuse, 0);
+        gl.uniform1i(shader.uniform.lightmap, 1);
+        
+        for (i in this.meshes) {
+            mesh = this.meshes[i];
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, mesh.diffuse);
+
+            for (j in mesh.submeshes) {
+                submesh = mesh.submeshes[j];
+                
+                for(k in this._instances) {
+                    instance = this._instances[k];
+                    
+                    if(instance._visibleFlag < 0 || instance._visibleFlag >= visibilityFlag) {
+                        gl.activeTexture(gl.TEXTURE1);
+                        gl.bindTexture(gl.TEXTURE_2D, lightmaps[instance.lightmap.id]);
+                        
+                        gl.uniform2fv(shader.uniform.lightmapScale, instance.lightmap.scale);
+                        gl.uniform2fv(shader.uniform.lightmapOffset, instance.lightmap.offset);
+                        gl.uniformMatrix4fv(shader.uniform.modelMat, false, instance.matrix);
+                        gl.drawElements(gl.TRIANGLES, submesh.indexCount, gl.UNSIGNED_SHORT, submesh.indexOffset*2);
+                    }
+                }
+            }
+        }
+    };
+
     var ModelInstance = function(model) {
         this.model = model;
         this.matrix = mat4.identity();

@@ -24,21 +24,21 @@
 define([
     "camera",
     "model",
+    "skinned-model",
     "animation",
+    "level",
     "util/gl-util",
     "js/util/gl-matrix.js",
-], function(camera, model, animation, glUtil) {
+], function(camera, model, skinnedModel, animation, level, glUtil) {
 
     "use strict";
 
     var GameRenderer = function (gl, canvas) {
         var i, instance;
-        
         // To get a camera that gives you a flying first-person perspective, use camera.FlyingCamera
         // To get a camera that rotates around a fixed point, use camera.ModelCamera
-        this.camera = new camera.ModelCamera(canvas);
-        this.camera.distance = 75;
-        this.camera.setCenter([0, 0, 0]);
+        this.camera = new camera.FlyingCamera(canvas);
+        this.camera.setPosition([-2, 3, 15]);
 
         this.fov = 45;
         this.projectionMat = mat4.create();
@@ -47,42 +47,11 @@ define([
         gl.clearColor(0.0, 0.0, 0.2, 1.0);
         gl.clearDepth(1.0);
         gl.enable(gl.DEPTH_TEST);
+        gl.enable(gl.CULL_FACE);
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
-        this.model1 = new model.Model();
-        this.model1.load(gl, "root/model/vat");
-        
-        this.model2 = new model.Model();
-        this.model2.load(gl, "root/model/crateSmall");
-        
-        this.model3 = new model.Model();
-        this.model3.load(gl, "root/model/crateMedium");
-        
-        this.model4 = new model.Model();
-        this.model4.load(gl, "root/model/barrelSmall");
-        
-        function createInstances(modelType, count) {
-            for(i = 0; i < count; ++i) {
-                instance = modelType.createInstance();
-
-                // Generate a random rotation and position for this instance
-                mat4.rotateX(instance.matrix, Math.random() * Math.PI);
-                mat4.rotateY(instance.matrix, Math.random() * Math.PI);
-                mat4.rotateZ(instance.matrix, Math.random() * Math.PI);
-
-                // Generate a random rotation and position for this instance
-                mat4.translate(instance.matrix, 
-                    [(Math.random()-0.5) * 100.0,
-                    (Math.random()-0.5) * 100.0,
-                    (Math.random()-0.5) * 100.0]
-                );
-            }
-        }
-        
-        createInstances(this.model1, 250);
-        createInstances(this.model2, 250);
-        createInstances(this.model3, 250);
-        createInstances(this.model4, 250);
+        this.level = new level.Level();
+        this.level.load(gl, "root/level/level1");
     };
 
     GameRenderer.prototype.resize = function (gl, canvas) {
@@ -98,10 +67,7 @@ define([
 
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        this.model1.drawInstances(gl, viewMat, projectionMat);
-        this.model2.drawInstances(gl, viewMat, projectionMat);
-        this.model3.drawInstances(gl, viewMat, projectionMat);
-        this.model4.drawInstances(gl, viewMat, projectionMat);
+        this.level.draw(gl, viewMat, projectionMat);
     };
 
     return {

@@ -136,10 +136,10 @@ define([
 
         this._angles = vec3.create();
         this._position = vec3.create();
-        this.speed = 100;
+        this.speed = 25;
         this._pressedKeys = new Array(128);
         this._viewMat = mat4.create();
-        this._cameraMat = mat4.create();
+        this._rotMat = mat4.create();
         this._dirty = true;
         
         // Set up the appropriate event hooks
@@ -160,14 +160,18 @@ define([
         }, false);
 
         canvas.addEventListener('mousemove', function (event) {
+            if(!event) { throw new Error("BAD SHIT HAPPENED!"); }
             if (moving) {
                 var xDelta = event.pageX  - lastX,
-                    yDelta = event.pageY  - lastY;
+                    yDelta = event.pageY  - lastY,
+                    rot = self._rotMat;
 
                 lastX = event.pageX;
                 lastY = event.pageY;
 
                 self._angles[1] += xDelta * 0.025;
+                // Keep our rotation in the range of [0, 2*PI]
+                // (Prevents numeric instability if you spin around a LOT.)
                 while (self._angles[1] < 0) {
                     self._angles[1] += Math.PI * 2.0;
                 }
@@ -176,12 +180,18 @@ define([
                 }
 
                 self._angles[0] += yDelta * 0.025;
-                while (self._angles[0] < -Math.PI * 0.5) {
+                // Clamp the up/down rotation to prevent us from flipping upside-down
+                if (self._angles[0] < -Math.PI * 0.5) {
                     self._angles[0] = -Math.PI * 0.5;
                 }
-                while (self._angles[0] > Math.PI * 0.5) {
+                if (self._angles[0] > Math.PI * 0.5) {
                     self._angles[0] = Math.PI * 0.5;
                 }
+                
+                // Update the directional matrix
+                mat4.identity(rot);
+                mat4.rotateY(rot, -self._angles[1]);
+                mat4.rotateX(rot, -self._angles[0]);
 
                 self._dirty = true;
             }
@@ -216,9 +226,9 @@ define([
         if (this._dirty) {
             var mv = this._viewMat;
             mat4.identity(mv);
-            mat4.rotateX(mv, this._angles[0] - Math.PI / 2.0);
-            mat4.rotateZ(mv, this._angles[1]);
-            mat4.rotateY(mv, this._angles[2]);
+            mat4.rotateX(mv, this._angles[0]);
+            mat4.rotateY(mv, this._angles[1]);
+            mat4.rotateZ(mv, this._angles[2]);
             mat4.translate(mv, [-this._position[0], -this._position[1], -this._position[2]]);
             this._dirty = false;
         }
@@ -228,15 +238,14 @@ define([
 
     FlyingCamera.prototype.update  = function (frameTime) {
         var dir = vec3.create(),
-            speed = (this.speed / 1000) * frameTime,
-            cam;
+            speed = (this.speed / 1000) * frameTime;
 
         // This is our first person movement code. It's not really pretty, but it works
         if (this._pressedKeys['W'.charCodeAt(0)]) {
-            dir[1] += speed;
+            dir[2] -= speed;
         }
         if (this._pressedKeys['S'.charCodeAt(0)]) {
-            dir[1] -= speed;
+            dir[2] += speed;
         }
         if (this._pressedKeys['A'.charCodeAt(0)]) {
             dir[0] -= speed;
@@ -245,22 +254,15 @@ define([
             dir[0] += speed;
         }
         if (this._pressedKeys[32]) { // Space, moves up
-            dir[2] += speed;
+            dir[1] += speed;
         }
         if (this._pressedKeys[17]) { // Ctrl, moves down
-            dir[2] -= speed;
+            dir[1] -= speed;
         }
 
         if (dir[0] !== 0 || dir[1] !== 0 || dir[2] !== 0) {
-            cam = this._cameraMat;
-            mat4.identity(cam);
-            mat4.rotateX(cam, this._angles[0]);
-            mat4.rotateZ(cam, this._angles[1]);
-            mat4.inverse(cam);
-
-            mat4.multiplyVec3(cam, dir);
-
             // Move the camera in the direction we are facing
+            mat4.multiplyVec3(this._rotMat, dir);
             vec3.add(this._position, dir);
 
             this._dirty = true;

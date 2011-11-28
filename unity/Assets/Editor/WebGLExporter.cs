@@ -14,6 +14,29 @@ using System.Text.RegularExpressions;
 using Antlr.StringTemplate;
 using Antlr.StringTemplate.Language;
 
+struct WebGLPropInstance
+{
+	public Vector3 pos;
+    public Quaternion rot;
+	public float scale;
+	public int lightmapId;
+	public Vector2 lightmapScale;
+	public Vector2 lightmapOffset;
+}
+
+struct WebGLProp
+{
+	public string modelPath;
+	public List<WebGLPropInstance> instances;
+}
+
+struct WebGLLevel
+{
+	public string name;
+	public string[] lightmaps;
+	public List<WebGLProp> props;	
+}
+
 struct WebGLMesh
 {
     public UInt16 indexOffset;
@@ -100,8 +123,11 @@ public class WebGLExporter : ScriptableObject
     //the reader.
     private static string modelFolder = "WebGLExport/model";
     private static string textureFolder = "WebGLExport/texture";
+	private static string levelFolder = "WebGLExport/level";
     public static string templatePath = Application.dataPath + "/Editor/WebGL/WebGLExportTemplates/";
     private static UInt32 vertBinaryVersion = 1;
+	
+	private static Dictionary<string, Texture> exportedTextures = new Dictionary<string, Texture>();
 
     private static void WriteMeshBinary(Mesh mesh, VertexFormat vertexFormat, Material[] materials, int[] boneIdLookup, Stream outStream, out Dictionary<Material, WebGLModel> models) 
     {
@@ -117,6 +143,17 @@ public class WebGLExporter : ScriptableObject
         Color[] colors = mesh.colors;
         BoneWeight[] boneWeights = mesh.boneWeights;
         
+		// Check for some attributes that may not be present. Remove them from the mask if they have no data
+		if(uv2.Length == 0 && (vertexFormat & VertexFormat.UV2)  == VertexFormat.UV2) { 
+			vertexFormat &= ~VertexFormat.UV2; 
+		}
+		if(colors.Length == 0 && (vertexFormat & VertexFormat.Color) == VertexFormat.Color) { 
+			vertexFormat &= ~VertexFormat.Color; 
+		}
+		if(boneWeights.Length == 0 && (vertexFormat & VertexFormat.BoneWeights) == VertexFormat.BoneWeights) { 
+			vertexFormat &= ~VertexFormat.BoneWeights; 
+		}
+		
         // Build the vertex buffer
         UInt32 vertStride = 0;
         
@@ -128,8 +165,6 @@ public class WebGLExporter : ScriptableObject
         if((vertexFormat & VertexFormat.Color) == VertexFormat.Color) { vertStride += 4; }
         if((vertexFormat & VertexFormat.BoneWeights) == VertexFormat.BoneWeights) { vertStride += 24; }
         
-        //UInt32 vertCount = (UInt32)verts.Length;
-        
         MemoryStream vertStream = new MemoryStream();
         BinaryWriter vertBuf = new BinaryWriter( vertStream );
         
@@ -138,7 +173,7 @@ public class WebGLExporter : ScriptableObject
         
         for(i = 0; i < verts.Length; ++i) {
             if((vertexFormat & VertexFormat.Position) == VertexFormat.Position) {
-                vertBuf.Write(verts[i].x);
+                vertBuf.Write(verts[i].x); // Apparently Unity does it's X axis "backwards" from most other apps
                 vertBuf.Write(verts[i].y);
                 vertBuf.Write(verts[i].z);
             }
@@ -154,7 +189,7 @@ public class WebGLExporter : ScriptableObject
             }
             
             if((vertexFormat & VertexFormat.Normal) == VertexFormat.Normal) {
-                vertBuf.Write(normals[i].x);
+                vertBuf.Write(-normals[i].x);
                 vertBuf.Write(normals[i].y);
                 vertBuf.Write(normals[i].z);
             }
@@ -272,10 +307,8 @@ public class WebGLExporter : ScriptableObject
         lumpStream.WriteTo(outStream);
     }
     
-    private static void WriteMeshJson(MeshFilter meshFilter, Stream outStream, Dictionary<Material, WebGLModel> materialModels) 
+    private static void WriteMeshJson(Mesh mesh, Stream outStream, Dictionary<Material, WebGLModel> materialModels) 
     {       
-        Mesh mesh = meshFilter.sharedMesh;
-        
         StringTemplateGroup templateGroup = new StringTemplateGroup ("MG", templatePath, typeof(DefaultTemplateLexer));
         StringTemplate modelTemplate = templateGroup.GetInstanceOf("WebGLModel");
         
@@ -326,6 +359,9 @@ public class WebGLExporter : ScriptableObject
         WebGLBone webGLBone, parentGLBone;
         Transform bone;
         int i,j;
+		
+		Matrix4x4 xScale = Matrix4x4.Scale(new Vector3(-1.0f, 1.0f, 1.0f));
+		Matrix4x4 flippedBindPose;
         
         // First pass to setup the bones
         for (i = 0; i < skinnedRenderer.bones.Length; ++i) {
@@ -334,14 +370,16 @@ public class WebGLExporter : ScriptableObject
             
             // Only the bones that are actually used for skinning need a bind-pose matrix
             webGLBone.bindPoseMat = new float[16];
+			flippedBindPose = mesh.bindposes[i]; // * xScale;
             for(j = 0; j < 16; ++j) {
-                webGLBone.bindPoseMat[j] = mesh.bindposes[i][j];
+                webGLBone.bindPoseMat[j] = flippedBindPose[j];
             }
             webGLBone.originalBone = bone;
             webGLBone.originalId = i;
             webGLBone.skinned = "true";
             webGLBone.name = bone.name;
             webGLBone.pos = bone.localPosition;
+			//webGLBone.pos.x *= -1.0f;
             webGLBone.rot = bone.localRotation;
             
             boneTable[bone] = webGLBone; // Ensure that previously existing bones get replaced
@@ -354,7 +392,9 @@ public class WebGLExporter : ScriptableObject
                 webGLBone.originalId = -1;
                 webGLBone.name = bone.name;
                 webGLBone.pos = bone.localPosition;
+				//webGLBone.pos.x *= -1.0f;
                 webGLBone.rot = bone.localRotation;
+				//webGLBone.rot.x *= -1.0f;
                 
                 boneTable.Add(bone, webGLBone);
             }
@@ -393,38 +433,53 @@ public class WebGLExporter : ScriptableObject
     }
     
     private static string CreateWebTexture(Texture2D texture) {
-        if(texture == null) { return null; }
-        
-        string origPath = AssetDatabase.GetAssetPath(texture);
-        TextureImporter textureImporter = (TextureImporter)AssetImporter.GetAtPath(origPath);
-        string texturePath = origPath.Replace("Assets/Textures", "");
+		if(texture == null) { return null; }
+		
+		string origPath = AssetDatabase.GetAssetPath(texture);
+		string texturePath = origPath.Replace("Assets/Textures/", "");
         
         // Replace the original extension with .png 
         int extPos = texturePath.LastIndexOf(".");
         texturePath = texturePath.Substring(0, extPos) + ".png";
         
-        string publicPath = "root/texture" + texturePath;
-        
-        if (!textureImporter.isReadable) {
+        string publicPath = "root/texture/" + texturePath;
+		
+		//return publicPath;
+		
+		if(exportedTextures.ContainsKey(publicPath)) {
+			return publicPath;
+		}
+		
+		exportedTextures.Add(publicPath, texture);
+		
+		System.IO.Directory.CreateDirectory(Path.GetDirectoryName(textureFolder + "/" + texturePath));
+		
+		TextureImporter textureImporter = (TextureImporter)AssetImporter.GetAtPath(origPath);	
+		textureImporter.isReadable = true;
+		AssetDatabase.ImportAsset(origPath, ImportAssetOptions.ForceUpdate);
+		
+		if (!textureImporter.isReadable) {
             Debug.LogWarning("Texture is not marked as readable: " + origPath);
             return publicPath;
         }
-        
-        System.IO.Directory.CreateDirectory(Path.GetDirectoryName(textureFolder + "/" + texturePath));
+		
+		// Reload the texture after the readable settings have been changed
+		Texture2D exportTexture = AssetDatabase.LoadAssetAtPath(origPath, typeof(Texture2D)) as Texture2D;
         
         // Force the texture into a usable format (ARGB32)
-        Texture2D pngTexture = new Texture2D(texture.width, texture.height);
-        pngTexture.SetPixels(texture.GetPixels());
+        Texture2D pngTexture = new Texture2D(exportTexture.width, exportTexture.height);
+        pngTexture.SetPixels(exportTexture.GetPixels());
         
         Byte[] bytes = pngTexture.EncodeToPNG();
         using (FileStream stream = new FileStream(textureFolder + "/" + texturePath, FileMode.Create)) 
         {
             stream.Write(bytes, 0, bytes.Length);
+			stream.Close();
         }
         
         // Clean up the temp texture
         DestroyImmediate(pngTexture);
-        
+		
         return publicPath;
     }
     
@@ -508,15 +563,19 @@ public class WebGLExporter : ScriptableObject
         using (FileStream stream = new FileStream(folder +"/" + filename + ".wglvert", FileMode.Create)) 
         {
             VertexFormat vertexFormat = VertexFormat.Position | 
-                VertexFormat.UV | 
+                VertexFormat.UV |
+				VertexFormat.UV2 | 
                 VertexFormat.Normal |
-                VertexFormat.Tangent;
+                VertexFormat.Tangent |
+				VertexFormat.Color;
             
             WriteMeshBinary(mf.sharedMesh, vertexFormat, mf.renderer.sharedMaterials, null, stream, out materialModels);
+			stream.Close();
         }
         using (FileStream stream = new FileStream(folder +"/" + filename + ".wglmodel", FileMode.Create)) 
         {
-            WriteMeshJson(mf, stream, materialModels);
+            WriteMeshJson(mf.sharedMesh, stream, materialModels);
+			stream.Close();
         }
     }
 
@@ -543,11 +602,13 @@ public class WebGLExporter : ScriptableObject
                 VertexFormat.Tangent |
                 VertexFormat.BoneWeights;
             WriteMeshBinary(skinnedRenderer.sharedMesh, vertexFormat, skinnedRenderer.sharedMaterials, boneIdLookup, stream, out materialModels);
-        }
+        	stream.Close();
+		}
         using (FileStream stream = new FileStream(folder +"/" + filename + ".wglmodel", FileMode.Create)) 
         {
             WriteSkinnedMeshJson(skinnedRenderer, bones, stream, materialModels);
-        }
+        	stream.Close();
+		}
     }
 
     private static void AnimationToFile(AnimationClip anim, string folder, string filename) 
@@ -555,6 +616,7 @@ public class WebGLExporter : ScriptableObject
         using (FileStream stream = new FileStream(folder +"/" + filename + ".wglanim", FileMode.Create)) 
         {
             WriteAnimationJson(anim, stream);
+			stream.Close();
         }
     }
 
@@ -569,6 +631,7 @@ public class WebGLExporter : ScriptableObject
         {
             System.IO.Directory.CreateDirectory(modelFolder);
             System.IO.Directory.CreateDirectory(textureFolder);
+			System.IO.Directory.CreateDirectory(levelFolder);
         }
         catch
         {
@@ -589,7 +652,6 @@ public class WebGLExporter : ScriptableObject
         int exportedObjects = 0;
         
         selection = Selection.GetFiltered(typeof(MeshFilter), SelectionMode.Unfiltered);
-        
         for (int i = 0; i < selection.Length; i++)
         {
             exportedObjects++;
@@ -632,4 +694,167 @@ public class WebGLExporter : ScriptableObject
             EditorUtility.DisplayDialog("Animations not exported", "Make sure at least some of your selected are animations!", "");
         }
     }
+	
+	[MenuItem ("WebGL/Export Level")]
+    static void ExportLevel()
+    {
+        if (!CreateTargetFolder())
+            return;
+		
+		string filename = "level1";
+        
+		try {
+			// Export Lightmaps
+			string[] lightmapPaths = ExportLightmaps();
+			
+			// Find all prefabs
+			Dictionary<Mesh, List<MeshFilter>> staticPrefabs;
+			int instanceCount = FindInstances(out staticPrefabs);
+			
+			WebGLLevel level = BuildLevel(staticPrefabs, instanceCount, lightmapPaths);
+			
+			// Write out level file
+			using (FileStream stream = new FileStream(levelFolder +"/" + filename + ".wgllevel", FileMode.Create)) 
+	        {
+	            WriteLevel(level, stream);
+				stream.Close();
+	        }
+			
+			// Export prefabs
+			ExportPrefabs(staticPrefabs);
+			
+			// TODO: Write out instances
+			// TODO: Write out static geometry
+		} catch(Exception ex) {
+			Debug.LogError(ex.Message);
+		}
+		
+		EditorUtility.ClearProgressBar();
+        
+        Debug.Log("Level export complete.");
+    }
+	
+	static string[] ExportLightmaps() {
+		List<string> lightmapPaths = new List<string>();
+		int lightmapCount = LightmapSettings.lightmaps.Length;
+		for (int i = 0; i < lightmapCount; i++)
+        {
+			if(EditorUtility.DisplayCancelableProgressBar("Exporting " + lightmapCount + " Lightmaps", "Lightmap " + i, (float)i/(float)lightmapCount)) {
+				throw new Exception("User canceled export");
+			}
+			
+			string path = CreateWebTexture(LightmapSettings.lightmaps[i].lightmapFar);
+			lightmapPaths.Add(path);
+		}
+		
+		return lightmapPaths.ToArray();
+	}
+	
+	static int FindInstances(out Dictionary<Mesh, List<MeshFilter>> staticPrefabs) {
+		int instanceCount = 0;
+		
+		staticPrefabs = new Dictionary<Mesh, List<MeshFilter>>();
+		MeshFilter[] objects = GameObject.FindSceneObjectsOfType(typeof(MeshFilter)) as MeshFilter[];
+		
+		float sortedObjects = 0.0f;
+		float totalObjects = objects.Length;
+		foreach (MeshFilter obj in objects)
+		{
+			if(EditorUtility.DisplayCancelableProgressBar("Sorting " + totalObjects + " Meshes", obj.name, sortedObjects/totalObjects)) {
+				throw new Exception("User canceled export");
+			}
+			
+			sortedObjects += 1.0f;
+			
+			// For now only export static objects
+			if(obj.gameObject.isStatic && obj.renderer.enabled) {
+				instanceCount++;
+				
+				Mesh sharedMesh = obj.sharedMesh;
+				List<MeshFilter> instances;
+				
+				if(!staticPrefabs.TryGetValue(sharedMesh, out instances)) {
+					instances = new List<MeshFilter>();
+					staticPrefabs.Add(sharedMesh, instances);
+				}
+				instances.Add(obj);
+			}
+		}
+		
+		return instanceCount;
+	}
+	
+	static WebGLLevel BuildLevel(Dictionary<Mesh, List<MeshFilter>> staticPrefabs, int instanceCount, string[] lightmaps) {
+		WebGLLevel level = new WebGLLevel();
+		level.name = "WebGL Level";
+		level.lightmaps = lightmaps;
+		level.props = new List<WebGLProp>();
+		
+		float exportedInstances = 0.0f;
+		foreach (Mesh mesh in staticPrefabs.Keys)
+		{
+			MeshFilter meshFilter = staticPrefabs[mesh][0];
+			WebGLProp prop = new WebGLProp();
+			prop.instances = new List<WebGLPropInstance>();
+			prop.modelPath = "root/model/" + meshFilter.name;
+			
+			foreach(MeshFilter instance in staticPrefabs[mesh])
+			{
+				WebGLPropInstance propInstance = new WebGLPropInstance();
+				propInstance.pos = instance.transform.position;
+				//propInstance.pos.x *= -1.0f;
+				propInstance.rot = instance.transform.rotation;
+				// We're only storing a single scalar value for scale, take the max scale component
+				propInstance.scale = Math.Max(Math.Max(instance.transform.lossyScale.x, instance.transform.lossyScale.y), instance.transform.lossyScale.z);
+				
+				propInstance.lightmapId = instance.renderer.lightmapIndex;
+				propInstance.lightmapScale = new Vector2(instance.renderer.lightmapTilingOffset.x, instance.renderer.lightmapTilingOffset.y);
+				propInstance.lightmapOffset = new Vector2(instance.renderer.lightmapTilingOffset.z, instance.renderer.lightmapTilingOffset.w);
+				
+				if(EditorUtility.DisplayCancelableProgressBar("Exporting Level", "Processing Props", exportedInstances/instanceCount)) {
+					throw new Exception("User canceled export");
+				}
+				exportedInstances += 1.0f;
+				
+				prop.instances.Add(propInstance);
+			}
+			
+			level.props.Add(prop);
+		}
+		
+		return level;
+	}
+	
+	static void WriteLevel(WebGLLevel level, Stream outStream) {		
+		if(EditorUtility.DisplayCancelableProgressBar("Exporting Level", "Writing JSON", 1.0f)) {
+			throw new Exception("User canceled export");
+		}
+		
+		// Write out JSON
+		StringTemplateGroup templateGroup = new StringTemplateGroup ("MG", templatePath, typeof(DefaultTemplateLexer));
+        StringTemplate animTemplate = templateGroup.GetInstanceOf("WebGLLevel");
+        
+        animTemplate.SetAttribute("level", level);
+        
+        string content = animTemplate.ToString();
+        Byte[] bytes = new UTF8Encoding (true).GetBytes(CleanJSON(content));
+        outStream.Write(bytes, 0, bytes.Length);
+	}
+	
+	static void ExportPrefabs(Dictionary<Mesh, List<MeshFilter>> staticPrefabs) {
+		
+		float exportedPrefabs = 0.0f;
+		float totalPrefabs = staticPrefabs.Keys.Count;
+		foreach (Mesh mesh in staticPrefabs.Keys)
+		{
+			MeshFilter meshFilter = staticPrefabs[mesh][0];
+			if(EditorUtility.DisplayCancelableProgressBar("Exporting " + totalPrefabs + " Prefabs", meshFilter.name, exportedPrefabs/totalPrefabs)) {
+				throw new Exception("User canceled export");
+			}
+			
+			MeshToFile(meshFilter, modelFolder, meshFilter.name);
+			
+			exportedPrefabs += 1.0f;
+		}
+	}
 }
