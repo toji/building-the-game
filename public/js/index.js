@@ -21,67 +21,87 @@
  *    distribution.
  */
 
-require(["util/domReady!", // Waits for page load
-    "game-renderer",
+require([
+    "renderer",
+    "util/gl-context-helper",
     "util/gl-util",
-], function(doc, gameRenderer, glUtil) { 
+    "js/util/game-shim.js",
+    "js/util/Stats.js",
+    "js/angular/angular-1.0.0.min.js"
+], function(Renderer, GLContextHelper, GLUtil) {
 
     "use strict";
 
-    //
-    // Create gl context and start the render loop 
-    //
-    var canvas = document.getElementById("game-canvas");
-    var frame = document.getElementById("game-frame");
-    var fpsCounter = document.getElementById("fps");
-    var gl = glUtil.getContext(canvas);
+    // Setup the canvas and GL context, initialize the scene
+    var canvas = document.getElementById("webgl-canvas");
+    var contextHelper = new GLContextHelper(canvas, document.getElementById("content-frame"));
+    var renderer = new Renderer(contextHelper.gl, canvas);
 
-    if(!gl) { 
-        // Replace the canvas with a message that instructs them on how to get a WebGL enabled browser
-        glUtil.showGLFailed(frame); 
-        return;
-    }
-
-    // If we don't set this here, the rendering will be skewed
-    canvas.width = canvas.offsetWidth;
-    canvas.height = canvas.offsetHeight;
-
-    var renderer = new gameRenderer.GameRenderer(gl, canvas);
-    renderer.resize(gl, canvas);
-
-    glUtil.startRenderLoop(gl, canvas, function(gl, timing) {
-        fpsCounter.innerHTML = timing.framesPerSecond;
-        renderer.drawFrame(gl, timing);
-    });
-
-    //
-    // Wire up the Fullscreen button
-    //
     var fullscreenBtn = document.getElementById("fullscreen");
-
-    document.cancelFullScreen = document.webkitCancelFullScreen || document.mozCancelFullScreen;
-
-    var canvasOriginalWidth = canvas.width;
-    var canvasOriginalHeight = canvas.height;
-    fullscreenBtn.addEventListener("click", function() {
-        if(frame.webkitRequestFullScreen) {
-            frame.webkitRequestFullScreen(Element.ALLOW_KEYBOARD_INPUT);
-        } else if(frame.mozRequestFullScreen) {
-            frame.mozRequestFullScreen();
-        }
-    }, false);
-
-    function fullscreenchange() {
-        if(document.webkitIsFullScreen || document.mozFullScreen) {
-            canvas.width = screen.width;
-            canvas.height = screen.height;
-        } else {
-            canvas.width = canvasOriginalWidth;
-            canvas.height = canvasOriginalHeight;
-        }
-        renderer.resize(gl, canvas);
+    if(contextHelper.fullscreenSupported) {
+        fullscreenBtn.addEventListener("click", function() {
+            contextHelper.toggleFullscreen();
+        });
+    } else {
+        fullscreenBtn.parentElement.removeChild(fullscreenBtn);
     }
 
-    frame.addEventListener("webkitfullscreenchange", fullscreenchange, false);
-    frame.addEventListener("mozfullscreenchange", fullscreenchange, false);
+    var stats = new Stats();
+    document.getElementById("controls-container").appendChild(stats.domElement);
+    
+    // Get the render loop going
+    contextHelper.start(renderer, stats);
+
+    // Angular App
+    window.IsosurfaceState = function($scope, $http) {
+        $scope.renderer = renderer;
+        renderer.appScope = $scope;
+
+        $http.get('api/list').success(function(data) {
+            $scope.recentSurfaces = data;
+        });
+
+        // When changes are made that affect the rendered surface force a refresh
+        $scope.$watch( '[renderer.blockSizeX, renderer.blockSizeY, renderer.blockSizeZ, renderer.gridSize, renderer.isolevel]', function( newVal, oldVal ) {
+            renderer.rebuildSurfaces();
+        }, true );
+
+        $scope.savedUrl = null;
+        $scope.viewingRecent = false;
+
+        $scope.save = function() {
+            if(renderer.algorithimErr) {
+                return; // Don't save erronious code
+            }
+            var request = new XMLHttpRequest();
+            request.addEventListener("load", function() {
+                var res = JSON.parse(this.responseText);
+                $scope.$apply(function(){
+                    $scope.savedUrl = "/" + res.id;
+                });
+            });
+            request.open('POST', "/api", true);
+            request.overrideMimeType('application/json');
+            request.setRequestHeader('Content-Type', 'application/json');
+            request.send(JSON.stringify({
+                source: renderer.getSource(),
+                thumbnail: renderer.getThumbnail(),
+                blockSizeX: renderer.blockSizeX,
+                blockSizeY: renderer.blockSizeY,
+                blockSizeZ: renderer.blockSizeZ,
+                gridSize: renderer.gridSize,
+                isolevel: renderer.isolevel
+            }));
+        };
+
+        $scope.showRecent = function() {
+            $scope.viewingRecent = true;
+        };
+
+        $scope.showSurface = function() {
+            $scope.viewingRecent = false;
+        };
+    };
+
+    angular.bootstrap(document.body, []);
 });

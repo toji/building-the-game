@@ -21,37 +21,117 @@
  *    distribution.
  */
 
-define(function() {
+define([
+    "js/util/game-shim.js"
+], function() {
 
     "use strict";
 
-    // Polyfill to ensure we can always call requestAnimaionFrame
-    if(!window.requestAnimationFrame) {
-        window.requestAnimationFrame = (function(){
-            return  window.webkitRequestAnimationFrame || 
-                    window.mozRequestAnimationFrame    || 
-                    window.oRequestAnimationFrame      || 
-                    window.msRequestAnimationFrame     || 
-                    function(callback, element){
-                      window.setTimeout(function() {
-                          callback(new Date().getTime());
-                      }, 1000 / 60);
-                    };
-        })();
-    }
+    var vendorPrefixes = ["", "WEBKIT_", "MOZ_"];
+
+    var textureLoader = (function createTextureLoader() {
+        var MAX_CACHE_IMAGES = 16;
+
+        var textureImageCache = new Array(MAX_CACHE_IMAGES);
+        var cacheTop = 0;
+        var remainingCacheImages = MAX_CACHE_IMAGES;
+        var pendingTextureRequests = [];
+
+        var TextureImageLoader = function(loadedCallback) {
+            var self = this;
+
+            this.gl = null;
+            this.texture = null;
+            this.callback = null;
+
+            this.image = new Image();
+            this.image.addEventListener("load", function() {
+                var gl = self.gl;
+                gl.bindTexture(gl.TEXTURE_2D, self.texture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, self.image);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+                gl.generateMipmap(gl.TEXTURE_2D);
+
+                loadedCallback(self);
+                if(self.callback) { self.callback(self.texture); }
+            });
+        };
+
+        TextureImageLoader.prototype.loadTexture = function(gl, src, texture, callback) {
+            this.gl = gl;
+            this.texture = texture;
+            this.callback = callback;
+            this.image.src = src;
+        };
+
+        var PendingTextureRequest = function(gl, src, texture, callback) {
+            this.gl = gl;
+            this.src = src;
+            this.texture = texture;
+            this.callback = callback;
+        };
+
+        function releaseTextureImageLoader(til) {
+            var req;
+            if(pendingTextureRequests.length) {
+                req = pendingTextureRequests.shift();
+                til.loadTexture(req.gl, req.src, req.texture, req.callback);
+            } else {
+                textureImageCache[cacheTop++] = til;
+            }
+        }
+
+        return function(gl, src, texture, callback) {
+            var til;
+
+            if(cacheTop) {
+                til = textureImageCache[--cacheTop];
+                til.loadTexture(gl, src, texture, callback);
+            } else if (remainingCacheImages) {
+                til = new TextureImageLoader(releaseTextureImageLoader);
+                til.loadTexture(gl, src, texture, callback);
+                --remainingCacheImages;
+            } else {
+                pendingTextureRequests.push(new PendingTextureRequest(gl, src, texture, callback));
+            }
+        };
+    })();
+
+    var ShaderWrapper = function(gl, program) {
+        var i, attrib, uniform, count;
+
+        this.program = program;
+        this.attribute = {};
+        this.uniform = {};
+
+        count = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+        for (i = 0; i < count; i++) {
+            attrib = gl.getActiveAttrib(program, i);
+            this.attribute[attrib.name] = gl.getAttribLocation(program, attrib.name);
+        }
+
+        count = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+        for (i = 0; i < count; i++) {
+            uniform = gl.getActiveUniform(program, i);
+            this.uniform[uniform.name] = gl.getUniformLocation(program, uniform.name);
+        }
+    };
 
     return {
-        getContext: function(canvas) {
+        ShaderWrapper: ShaderWrapper,
+
+        getContext: function(canvas, options) {
             var context;
         
             if (canvas.getContext) {
                 try {
-                    context = canvas.getContext('webgl');
+                    context = canvas.getContext('webgl', options);
                     if(context) { return context; }
                 } catch(ex) {}
             
                 try {
-                    context = canvas.getContext('experimental-webgl');
+                    context = canvas.getContext('experimental-webgl', options);
                     if(context) { return context; }
                 } catch(ex) {}
             }
@@ -69,58 +149,52 @@ define(function() {
             errorElement.id = "gl-error";
             element.parentNode.replaceChild(errorElement, element);
         },
-    
-        createShaderProgram: function(gl, vertexShader, fragmentShader) {
+
+        createProgram: function(gl, vertexShaderSource, fragmentShaderSource) {
             var shaderProgram = gl.createProgram(),
-                vs = this._compileShader(gl, vertexShader, gl.VERTEX_SHADER),
-                fs = this._compileShader(gl, fragmentShader, gl.FRAGMENT_SHADER);
+                vs = this.compileShader(gl, vertexShaderSource, gl.VERTEX_SHADER),
+                fs = this.compileShader(gl, fragmentShaderSource, gl.FRAGMENT_SHADER);
 
             gl.attachShader(shaderProgram, vs);
             gl.attachShader(shaderProgram, fs);
             gl.linkProgram(shaderProgram);
 
             if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+                console.error("Shader program failed to link");
                 gl.deleteProgram(shaderProgram);
                 gl.deleteShader(vs);
                 gl.deleteShader(fs);
                 return null;
             }
 
-            var i, attrib, uniform;
-            var attribCount = gl.getProgramParameter(shaderProgram, gl.ACTIVE_ATTRIBUTES);
-            shaderProgram.attribute = {};
-            for (i = 0; i < attribCount; i++) {
-                attrib = gl.getActiveAttrib(shaderProgram, i);
-                shaderProgram.attribute[attrib.name] = gl.getAttribLocation(shaderProgram, attrib.name);
-            }
-
-            var uniformCount = gl.getProgramParameter(shaderProgram, gl.ACTIVE_UNIFORMS);
-            shaderProgram.uniform = {};
-            for (i = 0; i < uniformCount; i++) {
-                uniform = gl.getActiveUniform(shaderProgram, i);
-                shaderProgram.uniform[uniform.name] = gl.getUniformLocation(shaderProgram, uniform.name);
-            }
-
-            return shaderProgram;
+            return new ShaderWrapper(gl, shaderProgram);
         },
 
-        _compileShader: function(gl, source, type) {
-            var shaderHeader = "#ifdef GL_ES\n";
-            shaderHeader += "precision highp float;\n";
-            shaderHeader += "#endif\n";
-
+        compileShader: function(gl, source, type) {
+            var shaderHeader = "\n";
             var shader = gl.createShader(type);
 
             gl.shaderSource(shader, shaderHeader + source);
             gl.compileShader(shader);
 
             if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-                console.debug(gl.getShaderInfoLog(shader));
+                console.error(gl.getShaderInfoLog(shader));
                 gl.deleteShader(shader);
                 return null;
             }
 
             return shader;
+        },
+
+        getExtension: function(gl, name) {
+            var i, ext;
+            for(i in vendorPrefixes) {
+                ext = gl.getExtension(vendorPrefixes[i] + name);
+                if (ext) {
+                    return ext;
+                }
+            }
+            return null;
         },
     
         createSolidTexture: function(gl, color) {
@@ -132,58 +206,23 @@ define(function() {
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
             return texture;
         },
-    
+
         loadTexture: function(gl, src, callback) {
             var texture = gl.createTexture();
-            var image = new Image();
-            image.addEventListener("load", function() {
-                gl.bindTexture(gl.TEXTURE_2D, texture);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
-                gl.generateMipmap(gl.TEXTURE_2D);
-            
-                if(callback) { callback(texture); }
-            });
-            image.src = src;
+            textureLoader(gl, src, texture, callback);
             return texture;
         },
-    
-        startRenderLoop: function(gl, canvas, callback) {
-            var startTime = window.webkitAnimationStartTime || 
-                window.mozAnimationStartTime ||
-                new Date().getTime();
 
-            var lastTimeStamp = startTime;
-            var lastFpsTimeStamp = startTime;
-            var framesPerSecond = 0;
-            var frameCount = 0;
-        
-            function nextFrame(time){
-                // Recommendation from Opera devs: calling the RAF shim at the beginning of your
-                // render loop improves framerate on browsers that fall back to setTimeout
-                window.requestAnimationFrame(nextFrame, canvas);
-                
-                // Update FPS if a second or more has passed since last FPS update
-                if(time - lastFpsTimeStamp >= 1000) {
-                    framesPerSecond = frameCount;
-                    frameCount = 0;
-                    lastFpsTimeStamp = time;
-                } 
-
-                callback(gl, {
-                    startTime: startTime,
-                    timeStamp: time,
-                    elapsed: time - startTime,
-                    frameTime: time - lastTimeStamp,
-                    framesPerSecond: framesPerSecond,
-                });
-            
-                ++frameCount;
-                lastTimeStamp = time;
-            };
-
-            window.requestAnimationFrame(nextFrame, canvas);
-        },
+        getQueryVariable: function(name) {
+            var query = window.location.search.substring(1);
+            var vars = query.split("&");
+            for (var i = 0; i < vars.length; i++) {
+                var pair = vars[i].split("=");
+                if (pair[0] == name) {
+                    return unescape(pair[1]);
+                }
+            }
+            return null;
+        }
     };
 });

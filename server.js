@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 Brandon Jones
+ * Copyright (c) 2012 Brandon Jones
  *
  * This software is provided 'as-is', without any express or implied
  * warranty. In no event will the authors be held liable for any damages
@@ -26,13 +26,24 @@
 
 var path = require("path");
 var express = require("express");
-var app = express.createServer();
+var isosurface = require('./isosurface');
 
-var PORT = 9000;
+var PORT = 80;
 var STATIC_PATH = path.join(__dirname, "public");
 
+var app = express.createServer();
+app.use(express.bodyParser());
+
+app.use("/", isosurface.app);
+
 app.use(express.static(STATIC_PATH));
-app.use(express.directory(STATIC_PATH));
+//app.use(express.directory(STATIC_PATH));
+
 app.listen(PORT);
 
-console.log("Server is now listening on port " + PORT);
+//console.log("Server is now listening on port " + PORT);
+
+
+
+
+

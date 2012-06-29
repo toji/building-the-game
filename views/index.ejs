@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+
+<!--
+Copyright (c) 2011 Brandon Jones
+
+This software is provided 'as-is', without any express or implied
+warranty. In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+   1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be
+   appreciated but is not required.
+
+   2. Altered source versions must be plainly marked as such, and must not
+   be misrepresented as being the original software.
+
+   3. This notice may not be removed or altered from any source
+   distribution.
+-->
+
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+        <title>Isosurface Landcapes - Building the Game</title>
+        <!--link href="css/common.css" rel="stylesheet" type="text/css" /-->
+        <link href="css/bootstrap.min.css" rel="stylesheet" type="text/css" />
+        <link href="css/codemirror.css" rel="stylesheet" type="text/css" />
+
+        <style>
+            /* Make room for the navbar */
+            body {
+                padding-top: 60px; 
+            }
+            .CodeMirror {
+                background-color: white;
+                border-radius: 5px;
+                border: 1px solid #DDDDDD;
+                margin-bottom: 8px;
+            }
+            #webgl-canvas {
+                width: 100%; 
+                height: 480px;
+            }
+            #webgl-canvas:-webkit-full-screen {
+                position: absolute;
+                margin: 0px;
+                padding: 0px;
+                width: 100%;
+                height: 100%;
+            }
+            #webgl-canvas:-moz-full-screen {
+                position: absolute;
+                margin: 0px;
+                padding: 0px;
+                width: 100%;
+                height: 100%;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="navbar navbar-fixed-top">
+            <div class="navbar-inner">
+                <div class="container-fluid">
+                    <span class="brand">Isosurface Playground</span>
+                    <div class="nav-collapse">
+                        <ul class="nav pull-right">
+                            <li>
+                                <a href="https://github.com/toji/building-the-game">Building the Game: Part 6</a>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="container-fluid" ng-controller="IsosurfaceState">
+
+            <ul class="nav nav-tabs">
+                <li ng-class="{active:!viewingRecent}">
+                    <a href="#" ng-click="showSurface()">Surface Viewer</a>
+                </li>
+                <li ng-class="{active:viewingRecent}">
+                    <a href="#" ng-click="showRecent()">Recent Surfaces</a>
+                </li>
+            </ul>
+            <div class="row-fluid" ng-class="{hidden:viewingRecent}">
+                <div class="span12 well">
+                    <canvas id="webgl-canvas"></canvas>
+                    <div id="controls-container" class="content-column">
+                        <button class="btn pull-right" id="fullscreen"><i class="icon-fullscreen"></i> Fullscreen</button>
+                    </div>
+                </div>
+            </div>
+            <div class="row-fluid" ng-class="{hidden:!viewingRecent}">
+                <div class="span12 well">
+                    <ul class="thumnails">
+                        <li class="span3" ng-repeat="surface in recentSurfaces">
+                            <a href="/{{surface._id}}" class="thumbnail">
+                                <img height="120px" width="213px" src="{{surface.thumbnail}}" />
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="row-fluid">
+                <form ng-submit="save()">
+                    <div class="span4 form-horizontal well">
+                        <h4>Block Dimension</h4>
+                        <div class="control-group form-inline">
+                            <label>X:</label>
+                            <input type="number" class="input-mini" min="8" max="256" ng-model="renderer.blockSizeX" ng-init="renderer.blockSizeX = <%= blockSizeX %>"></input>
+                            <label>Y:</label>
+                            <input type="number" class="input-mini" min="8" max="256" ng-model="renderer.blockSizeY" ng-init="renderer.blockSizeY = <%= blockSizeY %>"></input>
+                            <label>Z:</label>
+                            <input type="number" class="input-mini" min="8" max="256" ng-model="renderer.blockSizeZ" ng-init="renderer.blockSizeZ = <%= blockSizeZ %>"></input>
+                        </div>
+                        <h4>Grid Size</h4>
+                        <div class="control-group form-inline" >
+                            <select class="input-mini" ng-model="renderer.gridSize" ng-init="renderer.gridSize = <%= gridSize %>">
+                                <option value="1">1x1</option>
+                                <option value="2">2x2</option>
+                                <option value="3">3x3</option>
+                                <option value="4">4x4</option>
+                                <option value="5">5x5</option>
+                                <option value="6">6x6</option>
+                                <option value="7">7x7</option>
+                                <option value="8">8x8</option>
+                                <option value="9">9x9</option>
+                            </select>
+                        </div>
+                        <h4>Iso Level</h4>
+                        <div class="control-group" >
+                            <label class="pull-right">{{renderer.isolevel | number:1}}</label>
+                            <input type="range" class="span10" min="-1" max="1" step="0.1" ng-model="renderer.isolevel" ng-init="renderer.isolevel = <%= isolevel %>"/>
+                        </div>
+                    </div>
+                    <div class="span8 well">
+                        <h4>Edit Isosurface</h4>
+                        <div class="alert alert-error" ng-class="{hidden:!renderer.algorithimErr}">{{renderer.algorithimErr}}</div>
+                        <div class="alert alert-success" ng-class="{hidden:!savedUrl}">Surface saved successfully! <a href="{{savedUrl}}">Link to the saved surface here</a></div>
+                        <textArea id="code-editor" ><%= source %></textArea>
+                        <div class="control-group form-inline">
+                            <button type="submit" class="btn btn-primary pull-right" ng-class="{disabled:renderer.algorithimErr}"><i class="icon-ok icon-white"></i> Save</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Script -->
+        <script src="js/util/require.js" data-main="js/index"></script>
+    </body>
+</html>
