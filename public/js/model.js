@@ -31,7 +31,7 @@ define([
     "use strict";
 
     // Model Shader
-    var modelVS = [ 
+    var modelVS = [
         "attribute vec3 position;",
         "attribute vec2 texture;",
         "attribute vec3 normal;",
@@ -46,7 +46,7 @@ define([
         "varying vec3 vNormal;",
         "varying vec3 vLightDir;",
         "varying vec3 vEyeDir;",
-        
+
         // A "manual" rotation matrix transpose to get the normal matrix
         "mat3 getNormalMat(mat4 mat) {",
         "   return mat3(mat[0][0], mat[1][0], mat[2][0], mat[0][1], mat[1][1], mat[2][1], mat[0][2], mat[1][2], mat[2][2]);",
@@ -93,9 +93,9 @@ define([
         " gl_FragColor = vec4(color.rgb * lightValue, 1.0);",
         "}"
     ].join("\n");
-    
+
     // Model Shader
-    var lightmapVS = [ 
+    var lightmapVS = [
         "attribute vec3 position;",
         "attribute vec2 texture;",
         "attribute vec2 texture2;",
@@ -103,7 +103,7 @@ define([
         "uniform mat4 viewMat;",
         "uniform mat4 modelMat;",
         "uniform mat4 projectionMat;",
-        
+
         "uniform vec2 lightmapScale;",
         "uniform vec2 lightmapOffset;",
 
@@ -135,7 +135,7 @@ define([
         " gl_FragColor = vec4(color.rgb * lightValue.rgb * (lightValue.a * brightness), 1.0);",
         "}"
     ].join("\n");
-    
+
     var modelShader = null;
     var lightmapShader = null;
 
@@ -186,7 +186,7 @@ define([
             var arrays = self._parseBinary(this.response);
             self._compileBuffers(gl, arrays);
             vertComplete = true;
-            
+
             if (modelComplete) {
                 self.complete = true;
                 if (callback) { callback(self); }
@@ -214,7 +214,7 @@ define([
         if (!modelShader) {
             modelShader = glUtil.createShaderProgram(gl, modelVS, modelFS);
         }
-        
+
         if (!lightmapShader) {
             lightmapShader = glUtil.createShaderProgram(gl, lightmapVS, lightmapFS);
         }
@@ -287,18 +287,18 @@ define([
         var i, mesh;
         for (i in meshes) {
             mesh = meshes[i];
-            Q.when(texture.TextureManager.getInstance(gl, mesh.defaultTexture), function(tex) {
+            texture.TextureManager.getInstance(gl, mesh.defaultTexture).then(function(tex) {
                 mesh.diffuse = tex;
             });
         }
     };
-    
+
     Model.prototype.createInstance = function() {
         var instance = new ModelInstance(this);
         this._instances.push(instance);
         return instance;
     };
-    
+
     Model.prototype.destroyInstance = function(instance) {
         var index = this._instances.indexOf(instance);
         if(index > -1) { this._instances.splice(index, 1); }
@@ -393,7 +393,7 @@ define([
             }
         }
     };
-    
+
     Model.prototype.drawInstances = function (gl, viewMat, projectionMat, visibileFlag) {
         if (!this.complete) { return; }
         if(this._visibleFlag > 0 && this._visibleFlag < visibilityFlag) { return; }
@@ -421,10 +421,10 @@ define([
 
             for (j in mesh.submeshes) {
                 submesh = mesh.submeshes[j];
-                
+
                 for(k in this._instances) {
                     instance = this._instances[k];
-                    
+
                     if(instance._visibleFlag < 0 || instance._visibleFlag >= visibilityFlag) {
                         gl.uniformMatrix4fv(shader.uniform.modelMat, false, instance.matrix);
                         gl.drawElements(gl.TRIANGLES, submesh.indexCount, gl.UNSIGNED_SHORT, submesh.indexOffset*2);
@@ -433,7 +433,7 @@ define([
             }
         }
     };
-    
+
     Model.prototype.drawLightmappedInstances = function (gl, viewMat, projectionMat, lightmaps, visibileFlag) {
         if (!this.complete) { return; }
         if(this._visibleFlag > 0 && this._visibleFlag < visibilityFlag) { return; }
@@ -451,7 +451,7 @@ define([
 
         gl.uniform1i(shader.uniform.diffuse, 0);
         gl.uniform1i(shader.uniform.lightmap, 1);
-        
+
         for (i in this.meshes) {
             mesh = this.meshes[i];
 
@@ -460,14 +460,14 @@ define([
 
             for (j in mesh.submeshes) {
                 submesh = mesh.submeshes[j];
-                
+
                 for(k in this._instances) {
                     instance = this._instances[k];
-                    
+
                     if(instance._visibleFlag < 0 || instance._visibleFlag >= visibilityFlag) {
                         gl.activeTexture(gl.TEXTURE1);
                         gl.bindTexture(gl.TEXTURE_2D, lightmaps[instance.lightmap.id]);
-                        
+
                         gl.uniform2fv(shader.uniform.lightmapScale, instance.lightmap.scale);
                         gl.uniform2fv(shader.uniform.lightmapOffset, instance.lightmap.offset);
                         gl.uniformMatrix4fv(shader.uniform.modelMat, false, instance.matrix);
@@ -483,15 +483,15 @@ define([
         this.matrix = mat4.identity();
         this._visibleFlag = -1;
     };
-    
+
     ModelInstance.prototype.destroy = function() {
         this.model.destroyInstance(this);
     };
-    
+
     ModelInstance.prototype.draw = function(gl, viewMat, projectionMat) {
         this.model.draw(this, viewMat, projectionMat, this.matrix);
     };
-    
+
     ModelInstance.prototype.updateVisibility = function(flag) {
         this.model._visibleFlag = flag;
         this._visibleFlag = flag;

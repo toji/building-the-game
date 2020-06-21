@@ -22,8 +22,7 @@
  */
 
 define([
-    "util/q"
-], function (Q) {
+], function () {
 
     "use strict";
 
@@ -32,34 +31,32 @@ define([
     };
 
     TextureManager.prototype.getInstance = function (gl, url) {
-        var self = this,
-            defer;
-        
+        var self = this;
+
         if(this.textures[url]) {
             return this.textures[url];
         }
-        
-        defer = Q.defer();
-        
-        this.textures[url] = defer.promise;
 
-        var texture = gl.createTexture();
-        var image = new Image();
-        image.addEventListener("load", function() {
-            gl.bindTexture(gl.TEXTURE_2D, texture);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
-            gl.generateMipmap(gl.TEXTURE_2D);
-        
-            defer.resolve(texture);
+        var promise = new Promise((resolve, reject) => {
+            var texture = gl.createTexture();
+            var image = new Image();
+            image.addEventListener("load", function() {
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+                gl.generateMipmap(gl.TEXTURE_2D);
+
+                resolve(texture);
+            });
+            image.addEventListener("error", function(err) {
+                reject(texture);
+            });
+            image.src = url;
         });
-        image.addEventListener("error", function(err) {
-            defer.reject(texture);
-        });
-        image.src = url;
-        
-        return defer.promise;
+
+        this.textures[url] = promise;
+        return promise;
     };
 
     return {

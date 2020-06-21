@@ -30,7 +30,7 @@ define([
 ], function (glUtil, model, texture, Q) {
 
     "use strict";
-    
+
     var Level = function () {
         this.props = [];
         this.lightmaps = [];
@@ -48,7 +48,7 @@ define([
             var level = JSON.parse(this.responseText);
             self._parseLevel(level);
             self._compileLevel(gl);
-            
+
             self.complete = true;
             if (callback) { callback(self); }
         };
@@ -66,13 +66,13 @@ define([
             lightmap = this.lightmapPaths[i];
             this._loadLightmap(gl, i, this.lightmapPaths[i]);
         }
-        
+
         for (i in this.props) {
             prop = this.props[i];
             url = prop.model;
             prop.model = new model.Model();
             prop.model.load(gl, url);
-            
+
             for(j in prop.instances) {
                 instance = prop.instances[j];
                 instance.modelInstance = prop.model.createInstance();
@@ -84,11 +84,11 @@ define([
             }
         }
     };
-    
+
     Level.prototype._loadLightmap = function(gl, id, url) {
         var self = this;
         this.lightmaps[id] = null;
-        Q.when(texture.TextureManager.getInstance(gl, url), function(tex) {
+        texture.TextureManager.getInstance(gl, url).then(function(tex) {
             self.lightmaps[id] = tex;
         });
     };
@@ -96,7 +96,7 @@ define([
     Level.prototype.draw = function (gl, viewMat, projectionMat) {
         var i, prop;
         if (!this.complete) { return; }
-        
+
         for (i in this.props) {
             prop = this.props[i];
             prop.model.drawLightmappedInstances(gl, viewMat, projectionMat, this.lightmaps);
